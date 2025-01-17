@@ -30,9 +30,10 @@ from diffusers.models.attention_processor import SpatialNorm
 from diffusers.models.attention_processor import Attention
 from diffusers.models.normalization import AdaGroupNorm
 from diffusers.models.normalization import RMSNorm
+from loguru import logger as _logger
+import sys
 
-logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
-
+logger_ = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 def prepare_causal_attention_mask(n_frame: int, n_hw: int, dtype, device, batch_size: int = None):
     seq_len = n_frame * n_hw
@@ -57,7 +58,7 @@ class CausalConv3d(nn.Module):
         chan_out,
         kernel_size: Union[int, Tuple[int, int, int]],
         stride: Union[int, Tuple[int, int, int]] = 1,
-        dilation: Union[int, Tuple[int, int, int]] = 1,
+        dilation: Union[int, Tuple[int, int, int]] = 1,#不开启膨胀卷积
         pad_mode='replicate',
         **kwargs
     ):
@@ -149,8 +150,8 @@ class UpsampleCausal3D(nn.Module):
         if hidden_states.shape[0] >= 64:
             hidden_states = hidden_states.contiguous()
 
-        # if `output_size` is passed we force the interpolation output
-        # size and do not make use of `scale_factor=2`
+        # if output_size is passed we force the interpolation output
+        # size and do not make use of scale_factor=2
         if self.interpolate:
             B, C, T, H, W = hidden_states.shape
             first_h, other_h = hidden_states.split((1, T - 1), dim=2)
@@ -199,16 +200,16 @@ class DownsampleCausal3D(nn.Module):
         eps=None,
         elementwise_affine=None,
         bias=True,
-        stride=2,
+        stride=2,#1pad,2stride,3kernel可以实现减半
     ):
         super().__init__()
         self.channels = channels
         self.out_channels = out_channels or channels
         self.use_conv = use_conv
-        self.padding = padding
+        self.padding = padding #没用上这个参数
         stride = stride
         self.name = name
-
+        #都是在通道维度
         if norm_type == "ln_norm":
             self.norm = nn.LayerNorm(channels, eps, elementwise_affine)
         elif norm_type == "rms_norm":
@@ -234,7 +235,7 @@ class DownsampleCausal3D(nn.Module):
             self.conv = conv
 
     def forward(self, hidden_states: torch.FloatTensor, scale: float = 1.0) -> torch.FloatTensor:
-        assert hidden_states.shape[1] == self.channels
+        assert hidden_states.shape[1] == self.channels #[B, C, H, W]
 
         if self.norm is not None:
             hidden_states = self.norm(hidden_states.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
@@ -299,7 +300,7 @@ class ResnetBlockCausal3D(nn.Module):
             self.norm1 = SpatialNorm(in_channels, temb_channels)
         else:
             self.norm1 = torch.nn.GroupNorm(num_groups=groups, num_channels=in_channels, eps=eps, affine=True)
-
+        #第一次卷积 T,H,W维度没有发生变化,仅channel有可能变化
         self.conv1 = CausalConv3d(in_channels, out_channels, kernel_size=3, stride=1)
 
         if temb_channels is not None:
@@ -323,6 +324,7 @@ class ResnetBlockCausal3D(nn.Module):
 
         self.dropout = torch.nn.Dropout(dropout)
         conv_3d_out_channels = conv_3d_out_channels or out_channels
+        #第二次卷积 H,W维度没有发生变化,仅channel有可能变化
         self.conv2 = CausalConv3d(out_channels, conv_3d_out_channels, kernel_size=3, stride=1)
 
         self.nonlinearity = get_activation(non_linearity)
@@ -409,11 +411,10 @@ class ResnetBlockCausal3D(nn.Module):
             input_tensor = (
                 self.conv_shortcut(input_tensor)
             )
-
+        #残差
         output_tensor = (input_tensor + hidden_states) / self.output_scale_factor
 
         return output_tensor
-
 
 def get_down_block3d(
     down_block_type: str,
@@ -445,8 +446,8 @@ def get_down_block3d(
 ):
     # If attn head dim is not defined, we default it to the number of heads
     if attention_head_dim is None:
-        logger.warn(
-            f"It is recommended to provide `attention_head_dim` when calling `get_down_block`. Defaulting `attention_head_dim` to {num_attention_heads}."
+        logger_.warning(
+            f"It is recommended to provide attention_head_dim when calling get_down_block. Defaulting attention_head_dim to {num_attention_heads}."
         )
         attention_head_dim = num_attention_heads
 
@@ -466,7 +467,6 @@ def get_down_block3d(
             resnet_time_scale_shift=resnet_time_scale_shift,
         )
     raise ValueError(f"{down_block_type} does not exist.")
-
 
 def get_up_block3d(
     up_block_type: str,
@@ -499,8 +499,8 @@ def get_up_block3d(
 ) -> nn.Module:
     # If attn head dim is not defined, we default it to the number of heads
     if attention_head_dim is None:
-        logger.warn(
-            f"It is recommended to provide `attention_head_dim` when calling `get_up_block`. Defaulting `attention_head_dim` to {num_attention_heads}."
+        logger_.warning(
+            f"It is recommended to provide attention_head_dim when calling get_up_block. Defaulting attention_head_dim to {num_attention_heads}."
         )
         attention_head_dim = num_attention_heads
 
@@ -522,10 +522,9 @@ def get_up_block3d(
         )
     raise ValueError(f"{up_block_type} does not exist.")
 
-
 class UNetMidBlockCausal3D(nn.Module):
     """
-    A 3D UNet mid-block [`UNetMidBlockCausal3D`] with multiple residual blocks and optional attention blocks.
+    中间模块，包含 (num_layers + 1) 个 ResnetBlockCausal3D 以及可选多头 Attention。
     """
 
     def __init__(
@@ -538,20 +537,20 @@ class UNetMidBlockCausal3D(nn.Module):
         resnet_time_scale_shift: str = "default",  # default, spatial
         resnet_act_fn: str = "swish",
         resnet_groups: int = 32,
-        attn_groups: Optional[int] = None,
+        attn_groups: int = None,
         resnet_pre_norm: bool = True,
         add_attention: bool = True,
         attention_head_dim: int = 1,
         output_scale_factor: float = 1.0,
     ):
         super().__init__()
-        resnet_groups = resnet_groups if resnet_groups is not None else min(in_channels // 4, 32)
         self.add_attention = add_attention
+        resnet_groups = resnet_groups if resnet_groups is not None else min(in_channels // 4, 32)
 
         if attn_groups is None:
             attn_groups = resnet_groups if resnet_time_scale_shift == "default" else None
 
-        # there is always at least one resnet
+        # 第 0 个 Resnet
         resnets = [
             ResnetBlockCausal3D(
                 in_channels=in_channels,
@@ -569,11 +568,12 @@ class UNetMidBlockCausal3D(nn.Module):
         attentions = []
 
         if attention_head_dim is None:
-            logger.warn(
-                f"It is not recommend to pass `attention_head_dim=None`. Defaulting `attention_head_dim` to `in_channels`: {in_channels}."
+            logger_.warning(
+                f"It is not recommended to pass attention_head_dim=None. Defaulting attention_head_dim to {in_channels}."
             )
             attention_head_dim = in_channels
 
+        # 后面 num_layers 次：Attention + Resnet
         for _ in range(num_layers):
             if self.add_attention:
                 attentions.append(
@@ -612,21 +612,70 @@ class UNetMidBlockCausal3D(nn.Module):
         self.attentions = nn.ModuleList(attentions)
         self.resnets = nn.ModuleList(resnets)
 
-    def forward(self, hidden_states: torch.FloatTensor, temb: Optional[torch.FloatTensor] = None) -> torch.FloatTensor:
-        hidden_states = self.resnets[0](hidden_states, temb)
-        for attn, resnet in zip(self.attentions, self.resnets[1:]):
-            if attn is not None:
-                B, C, T, H, W = hidden_states.shape
-                hidden_states = rearrange(hidden_states, "b c f h w -> b (f h w) c")
-                attention_mask = prepare_causal_attention_mask(
-                    T, H * W, hidden_states.dtype, hidden_states.device, batch_size=B
-                )
-                hidden_states = attn(hidden_states, temb=temb, attention_mask=attention_mask)
-                hidden_states = rearrange(hidden_states, "b (f h w) c -> b c f h w", f=T, h=H, w=W)
-            hidden_states = resnet(hidden_states, temb)
+        # 总计 (num_layers + 1) 个 ResnetBlock
+        self.num_resblocks = num_layers + 1
+
+        # 用于存储每个resnet是否在前/后做 pooling/padding
+        self.resnet_pool_configs = [None] * self.num_resblocks
+        self.resnet_pad_configs  = [None] * self.num_resblocks
+
+    def apply_t_ops_config_midblock(self, config: dict):
+        if not isinstance(config, dict):
+            return
+
+        epb = config.get("enable_t_pool_before_block", [])
+        epa = config.get("enable_t_pool_after_block", [])
+
+        if any(len(lst) != self.num_resblocks for lst in [epb, epa]):
+            raise ValueError(
+                f"[UNetMidBlockCausal3D] T-ops config mismatch: we have {self.num_resblocks} ResnetBlock(s), "
+                f"but got list lengths: {list(map(len, [epb, epa, edb, eda]))}"
+            )
+
+        pool_k = config.get("pool_t_kernel", 2)
+        pool_s = config.get("pool_t_stride", 2)
+
+
+        for i in range(self.num_resblocks):
+            self.resnet_pool_configs[i] = {
+                "enable_before": epb[i],
+                "enable_after":  epa[i],
+                "kernel": pool_k,
+                "stride": pool_s
+            }
+
+    def forward(self, hidden_states: torch.FloatTensor, temb: torch.FloatTensor = None) -> torch.FloatTensor:
+        """
+        先经过第 0 个 ResnetBlock（无 attention），然后再重复(Attention + ResnetBlock) num_layers次。
+        在每个 ResnetBlock 前/后，根据 self.resnet_pool_configs[i] / self.resnet_pad_configs[i] 决定是否做 replicate pad + avg_pool3d。
+        """
+        for i in range(self.num_resblocks):
+            # 如果这是第 0 个 resnet，就没有 attention；否则 i>=1 时注意 handle attention
+            if i > 0:
+                # 先做 attention
+                attn = self.attentions[i - 1]  # 第 (i-1) 个 attention
+                if attn is not None:
+                    B, C, T, H, W = hidden_states.shape
+                    hidden_states = rearrange(hidden_states, "b c f h w -> b (f h w) c")
+                    attention_mask = prepare_causal_attention_mask(T, H*W, hidden_states.dtype, hidden_states.device, batch_size=B)
+                    hidden_states = attn(hidden_states, temb=temb, attention_mask=attention_mask)
+                    hidden_states = rearrange(hidden_states, "b (f h w) c -> b c f h w", f=T, h=H, w=W)
+            
+            pool_conf = self.resnet_pool_configs[i] or {}
+            if pool_conf.get("enable_before", False):
+                k, s = pool_conf["kernel"], pool_conf["stride"]
+                hidden_states = F.pad(hidden_states, pad=(0,0,0,0,k-1,0), mode='replicate')
+                hidden_states = F.avg_pool3d(hidden_states, kernel_size=(k,1,1), stride=(s,1,1))
+            # 再做 ResnetBlock
+            hidden_states = self.resnets[i](hidden_states, temb=temb)
+
+            # 是否在 ResnetBlock 之后做 pool/pad
+            if pool_conf.get("enable_after", False):
+                k, s = pool_conf["kernel"], pool_conf["stride"]
+                hidden_states = F.pad(hidden_states, pad=(0,0,0,0,k-1,0), mode='replicate')
+                hidden_states = F.avg_pool3d(hidden_states, kernel_size=(k,1,1), stride=(s,1,1))
 
         return hidden_states
-
 
 class DownEncoderBlockCausal3D(nn.Module):
     def __init__(
@@ -682,19 +731,68 @@ class DownEncoderBlockCausal3D(nn.Module):
             )
         else:
             self.downsamplers = None
+        self.resnet_pool_configs = [None] * num_layers
+        
+    def apply_t_ops_config(self, block_config: dict):
+        if "downsample_stride" in block_config:
+            ds_stride = tuple(block_config["downsample_stride"])  # e.g. [1, 2, 2] -> (1, 2, 2)
+            if self.downsamplers is not None:
+                for ds in self.downsamplers:
+                    ds.conv.conv.stride = ds_stride
+                    
+        num_resnet = len(self.resnets)
+        epb = block_config.get("enable_t_pool_before_block", [])
+        epa = block_config.get("enable_t_pool_after_block", [])
+        if any(len(x) != num_resnet for x in [epb, epa]):
+            raise ValueError(
+                f"[DownEncoderBlockCausal3D] config mismatch: expecting {num_resnet} bools in each list."
+            )
 
-    def forward(self, hidden_states: torch.FloatTensor, scale: float = 1.0) -> torch.FloatTensor:
-        for resnet in self.resnets:
+        pool_k = block_config.get("pool_t_kernel", 2)
+        pool_s = block_config.get("pool_t_stride", 2)
+
+        for i in range(num_resnet):
+            pool_conf = {
+                "enable_before": epb[i],
+                "enable_after":  epa[i],
+                "kernel": pool_k,
+                "stride": pool_s
+            }
+            self.resnet_pool_configs[i] = pool_conf
+            
+    def forward(self, hidden_states: torch.FloatTensor, scale: float = 1.0, index: int = None) -> torch.FloatTensor:
+        for i, resnet in enumerate(self.resnets):
+            pool_conf = self.resnet_pool_configs[i] or {}
+            if pool_conf.get("enable_before", False):
+                k, s = pool_conf["kernel"], pool_conf["stride"]
+                _logger.info(f"DownEncoderBlockCausal3D Pooling before ResnetBlock: kernel={k}, stride={s}, hidden_states.shape={hidden_states.shape}, layer={i}, index={index}")
+                padding = (k-1, 0)  # 仅在时间维度前向填充 k-1 个像素
+                hidden_states = F.pad(hidden_states, pad=(0, 0, 0, 0, padding[0], padding[1]), mode='replicate')
+                hidden_states = F.avg_pool3d(hidden_states, kernel_size=(k, 1, 1), stride=(s, 1, 1))      
+
+            # 2) ResnetBlock
             hidden_states = resnet(hidden_states, temb=None, scale=scale)
 
+            # 3) pool/pad AFTER
+            if pool_conf.get("enable_after", False):
+                k, s = pool_conf["kernel"], pool_conf["stride"]
+                padding = (k-1, 0)  # 仅在时间维度前向填充 k-1 个像素
+                hidden_states = F.pad(hidden_states, pad=(0, 0, 0, 0, padding[0], padding[1]), mode='replicate')
+                hidden_states = F.avg_pool3d(hidden_states, kernel_size=(k, 1, 1), stride=(s, 1, 1))      
+                _logger.info(f"DownEncoderBlockCausal3D Pooling after ResnetBlock: kernel={k}, stride={s}, hidden_states.shape={hidden_states.shape}, layer={i}, index={index}")
+
+        # 下采样
         if self.downsamplers is not None:
             for downsampler in self.downsamplers:
                 hidden_states = downsampler(hidden_states, scale)
 
         return hidden_states
 
-
 class UpDecoderBlockCausal3D(nn.Module):
+    """
+    上采样解码块, 包含 num_layers 个 ResnetBlockCausal3D, 以及可选 UpsampleCausal3D。
+    支持在每个 resnet 前/后插入 T 维度 pool/pad。
+    """
     def __init__(
         self,
         in_channels: int,
@@ -714,49 +812,102 @@ class UpDecoderBlockCausal3D(nn.Module):
     ):
         super().__init__()
         resnets = []
-
         for i in range(num_layers):
-            input_channels = in_channels if i == 0 else out_channels
-
-            resnets.append(
-                ResnetBlockCausal3D(
-                    in_channels=input_channels,
-                    out_channels=out_channels,
-                    temb_channels=temb_channels,
-                    eps=resnet_eps,
-                    groups=resnet_groups,
-                    dropout=dropout,
-                    time_embedding_norm=resnet_time_scale_shift,
-                    non_linearity=resnet_act_fn,
-                    output_scale_factor=output_scale_factor,
-                    pre_norm=resnet_pre_norm,
-                )
+            block_in_ch = in_channels if i == 0 else out_channels
+            block = ResnetBlockCausal3D(
+                in_channels=block_in_ch,
+                out_channels=out_channels,
+                temb_channels=temb_channels,
+                eps=resnet_eps,
+                groups=resnet_groups,
+                dropout=dropout,
+                time_embedding_norm=resnet_time_scale_shift,
+                non_linearity=resnet_act_fn,
+                output_scale_factor=output_scale_factor,
+                pre_norm=resnet_pre_norm,
             )
-
+            resnets.append(block)
         self.resnets = nn.ModuleList(resnets)
 
         if add_upsample:
-            self.upsamplers = nn.ModuleList(
-                [
-                    UpsampleCausal3D(
-                        out_channels,
-                        use_conv=True,
-                        out_channels=out_channels,
-                        upsample_factor=upsample_scale_factor,
-                    )
-                ]
-            )
+            self.upsamplers = nn.ModuleList([
+                UpsampleCausal3D(
+                    out_channels,
+                    use_conv=True,
+                    out_channels=out_channels,
+                    upsample_factor=upsample_scale_factor,
+                )
+            ])
         else:
             self.upsamplers = None
 
         self.resolution_idx = resolution_idx
 
+        # 为每个 ResnetBlock 存储 pool/pad 配置
+        self.resnet_interp_configs = [None] * num_layers
+        self.resolution_idx = resolution_idx
+        self.num_layers = num_layers
+
+
+    def apply_t_ops_config(self, block_config: dict):
+        num_resnet = len(self.resnets)
+        eib = block_config.get("enable_t_interp_before_block", [])
+        eia = block_config.get("enable_t_interp_after_block", [])
+        if any(len(x) != num_resnet for x in [eib, eia]):
+            raise ValueError(
+                f"[UpDecoderBlockCausal3D] config mismatch: expecting {num_resnet} bools in each list."
+            )
+
+        interp_scale = block_config.get("interp_t_scale_factor", 2)
+        interp_mode  = block_config.get("interp_mode", "nearest")
+        for i in range(num_resnet):
+            interp_conf = {
+                "enable_before": eib[i],
+                "enable_after":  eia[i],
+                "scale_factor":  interp_scale,
+                "mode":          interp_mode
+            }
+            self.resnet_interp_configs[i] = interp_conf
+
     def forward(
         self, hidden_states: torch.FloatTensor, temb: Optional[torch.FloatTensor] = None, scale: float = 1.0
     ) -> torch.FloatTensor:
-        for resnet in self.resnets:
+        """
+        在每个 ResnetBlock 前/后，看情况做:
+          - avg_pool3d (pool)
+          - replicate pad (pad)
+          - F.interpolate (插值)
+        然后再做 block 本身。
+        """
+        for i, resnet in enumerate(self.resnets):
+            interp_conf = self.resnet_interp_configs[i] or {}
+
+            # 1) 先看看有没有 "插值前"：
+            if interp_conf.get("enable_before", False):
+                sc = interp_conf["scale_factor"]
+                mode = interp_conf["mode"]
+                # 只对 time 维度插值 (dim=2)
+                # nearest插值非平滑, 但支持反向传播
+                if hidden_states.shape[2] > 0:
+                    hidden_states = F.interpolate(
+                        hidden_states,
+                        scale_factor=(sc, 1, 1),  # 仅沿时间维度放大 sc 倍
+                        mode=mode
+                    )
+
             hidden_states = resnet(hidden_states, temb=temb, scale=scale)
 
+            if interp_conf.get("enable_after", False):
+                sc = interp_conf["scale_factor"]
+                mode = interp_conf["mode"]
+                if hidden_states.shape[2] > 0:
+                    hidden_states = F.interpolate(
+                        hidden_states,
+                        scale_factor=(sc, 1, 1),
+                        mode=mode
+                    )
+
+        # upsample (原逻辑)
         if self.upsamplers is not None:
             for upsampler in self.upsamplers:
                 hidden_states = upsampler(hidden_states)

@@ -4,7 +4,7 @@ from typing import Optional, Tuple
 import numpy as np
 import torch
 import torch.nn as nn
-
+from loguru import logger
 from diffusers.utils import BaseOutput, is_torch_version
 from diffusers.utils.torch_utils import randn_tensor
 from diffusers.models.attention_processor import SpatialNorm
@@ -22,7 +22,7 @@ class DecoderOutput(BaseOutput):
     Output of decoding method.
 
     Args:
-        sample (`torch.FloatTensor` of shape `(batch_size, num_channels, height, width)`):
+        sample (torch.FloatTensor of shape (batch_size, num_channels, height, width)):
             The decoded output sample from the last layer of the model.
     """
 
@@ -31,7 +31,7 @@ class DecoderOutput(BaseOutput):
 
 class EncoderCausal3D(nn.Module):
     r"""
-    The `EncoderCausal3D` layer of a variational autoencoder that encodes its input into a latent representation.
+    The EncoderCausal3D layer of a variational autoencoder that encodes its input into a latent representation.
     """
 
     def __init__(
@@ -58,14 +58,17 @@ class EncoderCausal3D(nn.Module):
         # down
         output_channel = block_out_channels[0]
         for i, down_block_type in enumerate(down_block_types):
-            input_channel = output_channel
+            input_channel = output_channel#每个块的输入通道是上一个块的输出通道。
             output_channel = block_out_channels[i]
             is_final_block = i == len(block_out_channels) - 1
+            #下采样的层数
             num_spatial_downsample_layers = int(np.log2(spatial_compression_ratio))
             num_time_downsample_layers = int(np.log2(time_compression_ratio))
 
             if time_compression_ratio == 4:
+                #空间下采样层层有
                 add_spatial_downsample = bool(i < num_spatial_downsample_layers)
+                #时间下采样通常安排在编码器的后几层
                 add_time_downsample = bool(
                     i >= (len(block_out_channels) - 1 - num_time_downsample_layers)
                     and not is_final_block
@@ -81,10 +84,10 @@ class EncoderCausal3D(nn.Module):
                 num_layers=self.layers_per_block,
                 in_channels=input_channel,
                 out_channels=output_channel,
-                add_downsample=bool(add_spatial_downsample or add_time_downsample),
+                add_downsample=bool(add_spatial_downsample or add_time_downsample),#最后进行下空间下采样,以及空间下采样后的时间下采样,通过传入stride的tuple进行控制
                 downsample_stride=downsample_stride,
                 resnet_eps=1e-6,
-                downsample_padding=0,
+                downsample_padding=0,#没用上这个参数
                 resnet_act_fn=act_fn,
                 resnet_groups=norm_num_groups,
                 attention_head_dim=output_channel,
@@ -110,32 +113,32 @@ class EncoderCausal3D(nn.Module):
         self.conv_act = nn.SiLU()
 
         conv_out_channels = 2 * out_channels if double_z else out_channels
-        self.conv_out = CausalConv3d(block_out_channels[-1], conv_out_channels, kernel_size=3)
+        self.conv_out = CausalConv3d(block_out_channels[-1], conv_out_channels, kernel_size=3) #stride还是1
 
     def forward(self, sample: torch.FloatTensor) -> torch.FloatTensor:
-        r"""The forward method of the `EncoderCausal3D` class."""
+        r"""The forward method of the EncoderCausal3D class."""
         assert len(sample.shape) == 5, "The input tensor should have 5 dimensions"
 
-        sample = self.conv_in(sample)
+        sample = self.conv_in(sample) #仅channel纬度发生变化,in_channels -> block_out_channels[0]
 
         # down
-        for down_block in self.down_blocks:
-            sample = down_block(sample)
+        for i, down_block in enumerate(self.down_blocks): #改成
+            sample = down_block(sample, index=i)
 
         # middle
         sample = self.mid_block(sample)
 
         # post-process
-        sample = self.conv_norm_out(sample)
-        sample = self.conv_act(sample)
-        sample = self.conv_out(sample)
+        sample = self.conv_norm_out(sample) #channel维度GroupNorm
+        sample = self.conv_act(sample) 
+        sample = self.conv_out(sample)  #仅channel纬度发生变化,block_out_channels[-1] -> conv_out_channels
 
         return sample
 
 
 class DecoderCausal3D(nn.Module):
     r"""
-    The `DecoderCausal3D` layer of a variational autoencoder that decodes its latent representation into an output sample.
+    The DecoderCausal3D layer of a variational autoencoder that decodes its latent representation into an output sample.
     """
 
     def __init__(
@@ -170,7 +173,7 @@ class DecoderCausal3D(nn.Module):
             resnet_time_scale_shift="default" if norm_type == "group" else norm_type,
             attention_head_dim=block_out_channels[-1],
             resnet_groups=norm_num_groups,
-            temb_channels=temb_channels,
+            temb_channels=temb_channels, #与encoder的区别 也是额外传入了temb_channels 而像素的channel一样 ,主要是应用于ResnetBlockCausal3D中,卷积的之前与之后
             add_attention=mid_block_add_attention,
         )
 
@@ -198,17 +201,17 @@ class DecoderCausal3D(nn.Module):
             upsample_scale_factor = tuple(upsample_scale_factor_T + upsample_scale_factor_HW)
             up_block = get_up_block3d(
                 up_block_type,
-                num_layers=self.layers_per_block + 1,
+                num_layers=self.layers_per_block + 1, #额外多了一层 encoder中的layer是指ResnetBlockCausal3D个数 这里同样  但是多了一层
                 in_channels=prev_output_channel,
                 out_channels=output_channel,
                 prev_output_channel=None,
                 add_upsample=bool(add_spatial_upsample or add_time_upsample),
-                upsample_scale_factor=upsample_scale_factor,
+                upsample_scale_factor=upsample_scale_factor, #跟down的stride是一个参数
                 resnet_eps=1e-6,
                 resnet_act_fn=act_fn,
                 resnet_groups=norm_num_groups,
                 attention_head_dim=output_channel,
-                temb_channels=temb_channels,
+                temb_channels=temb_channels, #传入了实际的数值 temb 用于对激活值进行norm 又多种norm方法  1.scale,shift ada 2. 直接相加 default  等等  这个比较多  主要目的就是norm
                 resnet_time_scale_shift=norm_type,
             )
             self.up_blocks.append(up_block)
@@ -229,7 +232,7 @@ class DecoderCausal3D(nn.Module):
         sample: torch.FloatTensor,
         latent_embeds: Optional[torch.FloatTensor] = None,
     ) -> torch.FloatTensor:
-        r"""The forward method of the `DecoderCausal3D` class."""
+        r"""The forward method of the DecoderCausal3D class."""
         assert len(sample.shape) == 5, "The input tensor should have 5 dimensions."
 
         sample = self.conv_in(sample)
@@ -301,7 +304,7 @@ class DiagonalGaussianDistribution(object):
             raise NotImplementedError
         self.parameters = parameters
         self.mean, self.logvar = torch.chunk(parameters, 2, dim=dim)
-        self.logvar = torch.clamp(self.logvar, -30.0, 20.0)
+        self.logvar = torch.clamp(self.logvar, -30.0, 20.0) #避免对数方差的值过小或过大导致数值不稳定
         self.deterministic = deterministic
         self.std = torch.exp(0.5 * self.logvar)
         self.var = torch.exp(self.logvar)
@@ -309,7 +312,7 @@ class DiagonalGaussianDistribution(object):
             self.var = self.std = torch.zeros_like(
                 self.mean, device=self.parameters.device, dtype=self.parameters.dtype
             )
-
+    #从指定分布上进行采样
     def sample(self, generator: Optional[torch.Generator] = None) -> torch.FloatTensor:
         # make sure sample is on the same device as the parameters and has same dtype
         sample = randn_tensor(
@@ -326,12 +329,12 @@ class DiagonalGaussianDistribution(object):
             return torch.Tensor([0.0])
         else:
             reduce_dim = list(range(1, self.mean.ndim))
-            if other is None:
+            if other is None: #跟标准正态分布进行比较
                 return 0.5 * torch.sum(
                     torch.pow(self.mean, 2) + self.var - 1.0 - self.logvar,
                     dim=reduce_dim,
                 )
-            else:
+            else:#跟已知分布进行比较 多维高斯  mean和std都是多维度 要求除了batch之外,t,h,w,c求和
                 return 0.5 * torch.sum(
                     torch.pow(self.mean - other.mean, 2) / other.var
                     + self.var / other.var
