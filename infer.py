@@ -3,7 +3,7 @@ from hyvideo.vae import load_vae
 from loguru import logger
 import torch
 from torch.nn import Module
-from video_dataloader import get_single_batch_dataloader
+from dataset_processor.dataset_dataloader import VideoTensorDataset
 from torch.utils.data import DataLoader
 import os
 import os
