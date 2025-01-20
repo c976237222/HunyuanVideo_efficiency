@@ -739,6 +739,7 @@ class DownEncoderBlockCausal3D(nn.Module):
             if self.downsamplers is not None:
                 for ds in self.downsamplers:
                     ds.conv.conv.stride = ds_stride
+                    _logger.info(f"Down Conv Stride updated to {ds_stride}")
                     
         num_resnet = len(self.resnets)
         epb = block_config.get("enable_t_pool_before_block", [])
@@ -765,7 +766,7 @@ class DownEncoderBlockCausal3D(nn.Module):
             pool_conf = self.resnet_pool_configs[i] or {}
             if pool_conf.get("enable_before", False):
                 k, s = pool_conf["kernel"], pool_conf["stride"]
-                _logger.info(f"DownEncoderBlockCausal3D Pooling before ResnetBlock: kernel={k}, stride={s}, hidden_states.shape={hidden_states.shape}, layer={i}, index={index}")
+                _logger.info(f"Down Pooling before ResnetBlock: kernel={k}, stride={s}, hidden_states.shape={hidden_states.shape}, layer={i}, index={index}")
                 padding = (k-1, 0)  # 仅在时间维度前向填充 k-1 个像素
                 hidden_states = F.pad(hidden_states, pad=(0, 0, 0, 0, padding[0], padding[1]), mode='replicate')
                 hidden_states = F.avg_pool3d(hidden_states, kernel_size=(k, 1, 1), stride=(s, 1, 1))      
@@ -779,7 +780,7 @@ class DownEncoderBlockCausal3D(nn.Module):
                 padding = (k-1, 0)  # 仅在时间维度前向填充 k-1 个像素
                 hidden_states = F.pad(hidden_states, pad=(0, 0, 0, 0, padding[0], padding[1]), mode='replicate')
                 hidden_states = F.avg_pool3d(hidden_states, kernel_size=(k, 1, 1), stride=(s, 1, 1))      
-                _logger.info(f"DownEncoderBlockCausal3D Pooling after ResnetBlock: kernel={k}, stride={s}, hidden_states.shape={hidden_states.shape}, layer={i}, index={index}")
+                _logger.info(f"Down Pooling after ResnetBlock: kernel={k}, stride={s}, hidden_states.shape={hidden_states.shape}, layer={i}, index={index}")
 
         # 下采样
         if self.downsamplers is not None:
@@ -894,7 +895,7 @@ class UpDecoderBlockCausal3D(nn.Module):
                         scale_factor=(sc, 1, 1),  # 仅沿时间维度放大 sc 倍
                         mode=mode
                     )
-                _logger.info(f"UoDecoderBlockCausal3D Interp before ResnetBlock: scale_factor={sc,1,1},hidden_states.shape={hidden_states.shape}, layer={i}")
+                _logger.info(f"Up Interp before ResnetBlock: scale_factor={sc,1,1},hidden_states.shape={hidden_states.shape}, layer={i}")
 
             hidden_states = resnet(hidden_states, temb=temb, scale=scale)
 
@@ -907,7 +908,7 @@ class UpDecoderBlockCausal3D(nn.Module):
                         scale_factor=(sc, 1, 1),
                         mode=mode
                     )
-                _logger.info(f"UoDecoderBlockCausal3D Interp before ResnetBlock: scale_factor={sc,1,1},hidden_states.shape={hidden_states.shape}, layer={i}")
+                _logger.info(f"Up Interp before ResnetBlock: scale_factor={sc,1,1},hidden_states.shape={hidden_states.shape}, layer={i}")
         # upsample (原逻辑)
         if self.upsamplers is not None:
             for upsampler in self.upsamplers:
