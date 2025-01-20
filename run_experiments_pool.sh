@@ -19,7 +19,7 @@ ORIGINAL_VIDEOS="video_data/video_data_100_240p"
 OUT_BASE="analysis/one_true_pool"
 METRICS_BASE="analysis/one_true_pool_metrics"
 
-MAX_FILES=10
+MAX_FILES=100
 BATCH_SIZE=1
 NUM_WORKERS=4
 
@@ -31,8 +31,8 @@ mkdir -p "$CONFIG_JSON_DIR"
 
 # 若 exp_*.json 已残留, 先清理
 rm -rf "$CONFIG_JSON_DIR/exp_*.json"
-rm -rf "$OUT_BASE/*"
-rm -rf "$METRICS_BASE/*"
+rm -rf "$OUT_BASE"/*
+rm -rf "$METRICS_BASE"/*
 ##############################################
 # 2. 生成 JSON 配置
 ##############################################

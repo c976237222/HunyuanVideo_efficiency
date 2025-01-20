@@ -21,7 +21,7 @@ ORIGINAL_VIDEOS="video_data/video_data_100_240p"
 OUT_BASE="analysis/one_true_stride"
 METRICS_BASE="analysis/one_true_stride_metrics"
 
-MAX_FILES=1
+MAX_FILES=100
 BATCH_SIZE=1
 NUM_WORKERS=4
 
@@ -31,8 +31,8 @@ PYTHON="python"
 CONFIG_JSON_DIR="/mnt/public/wangsiyuan/HunyuanVideo_efficiency/analysis/config_stride_json"
 mkdir -p "$CONFIG_JSON_DIR"
 rm -rf "$CONFIG_JSON_DIR/exp_*.json"
-rm -rf "$OUT_BASE/*"
-rm -rf "$METRICS_BASE/*"
+rm -rf "$OUT_BASE"/*
+rm -rf "$METRICS_BASE"/*
 ##############################################
 # 2. 生成 JSON 配置
 ##############################################

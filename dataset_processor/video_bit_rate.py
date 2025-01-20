@@ -2,12 +2,13 @@ import os
 import subprocess
 from glob import glob
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from tqdm import tqdm
 
 # 设置路径
-video_dir = "/mnt/public/wangsiyuan/openvid_1m/video"
-output_file = "/mnt/public/wangsiyuan/openvid_1m/video_bitrate.txt"
-MAX_VIDEOS = 10000  # 最多处理 1w 个视频
-NUM_THREADS = 8  # 线程数，可根据 CPU 适当调整
+video_dir = "/home/hanling/HunyuanVideo_efficiency/video_data/video_data_5000_240p"
+output_file = "video_bitrate.txt"
+MAX_VIDEOS = 5000  # 最多处理 1w 个视频
+NUM_THREADS = 30  # 线程数，可根据 CPU 适当调整
 
 # 获取所有 MP4 文件
 video_files = sorted(glob(os.path.join(video_dir, "*.mp4")))[:MAX_VIDEOS]
