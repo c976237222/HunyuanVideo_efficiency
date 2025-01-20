@@ -102,7 +102,7 @@ def main():
     print(f"[INFO] We have 3 encoder stride variants x {D} decoder slots = {total} combos")
 
     # 生成输出目录
-    output_dir = "/mnt/public/wangsiyuan/HunyuanVideo_efficiency/analysis/config_json_stride"
+    output_dir = "/mnt/public/wangsiyuan/HunyuanVideo_efficiency/analysis/config_stride_json"
     os.makedirs(output_dir, exist_ok=True)
 
     combo_count = 0

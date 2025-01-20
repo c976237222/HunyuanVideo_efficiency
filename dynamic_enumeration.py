@@ -89,7 +89,7 @@ def main():
     combo_count = 0
 
     # 更新输出目录
-    output_dir = "/mnt/public/wangsiyuan/HunyuanVideo_efficiency/analysis/config_json"
+    output_dir = "/mnt/public/wangsiyuan/HunyuanVideo_efficiency/analysis/config_pool_json"
     os.makedirs(output_dir, exist_ok=True)
 
     for e_slot in enc_slots:

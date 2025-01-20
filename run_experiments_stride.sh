@@ -28,10 +28,11 @@ NUM_WORKERS=4
 PYTHON="python"
 
 # 确保 config_json_stride 目录存在；若已有残留则清理
-CONFIG_JSON_DIR="/mnt/public/wangsiyuan/HunyuanVideo_efficiency/analysis/config_json_stride"
+CONFIG_JSON_DIR="/mnt/public/wangsiyuan/HunyuanVideo_efficiency/analysis/config_stride_json"
 mkdir -p "$CONFIG_JSON_DIR"
-rm -f "$CONFIG_JSON_DIR/exp_*.json"
-rm -f "$OUT_BASE/*"
+rm -rf "$CONFIG_JSON_DIR/exp_*.json"
+rm -rf "$OUT_BASE/*"
+rm -rf "$METRICS_BASE/*"
 ##############################################
 # 2. 生成 JSON 配置
 ##############################################

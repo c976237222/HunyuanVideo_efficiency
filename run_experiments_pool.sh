@@ -26,12 +26,13 @@ NUM_WORKERS=4
 PYTHON="python"
 
 # 确保 config_json 目录存在
-CONFIG_JSON_DIR="/mnt/public/wangsiyuan/HunyuanVideo_efficiency/analysis/config_json"
+CONFIG_JSON_DIR="/mnt/public/wangsiyuan/HunyuanVideo_efficiency/analysis/config_pool_json"
 mkdir -p "$CONFIG_JSON_DIR"
 
 # 若 exp_*.json 已残留, 先清理
-rm -f "$CONFIG_JSON_DIR/exp_*.json"
-rm -f "$OUT_BASE/*"
+rm -rf "$CONFIG_JSON_DIR/exp_*.json"
+rm -rf "$OUT_BASE/*"
+rm -rf "$METRICS_BASE/*"
 ##############################################
 # 2. 生成 JSON 配置
 ##############################################
