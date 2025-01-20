@@ -1,0 +1,8 @@
+
+Root1: /home/hanling/HunyuanVideo_efficiency/video_data/video_data_100_240p
+Root2: /home/hanling/HunyuanVideo_efficiency/video_data/vae_output_videos
+Timestamp: 20250120_162604
+PSNR: 27.91713933632262
+SSIM: 0.8505142652203241
+LPIPS: 0.06806019522281813
+

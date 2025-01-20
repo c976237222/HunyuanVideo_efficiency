@@ -20,6 +20,7 @@ video_files = [f for f in os.listdir(video_dir) if f.endswith(".mp4")]
 skipped_count = 0
 
 # 预处理转换（只转换为 Tensor，不调整大小）
+# transforms.ToTensor() 会把像素值从 [0,255] 缩放到 [0,1]
 transform = transforms.ToTensor()
 
 def resize_video(input_path, output_path, target_height=240):
@@ -30,7 +31,7 @@ def resize_video(input_path, output_path, target_height=240):
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     print(f"fps: {fps}, width: {width}, height: {height}")
-    # 仅调整大于 240p 的视频
+    # 仅调整大于 target_height 的视频
     if height > target_height:
         new_width = int(width * (target_height / height))  # 按比例计算新宽度
         out = cv2.VideoWriter(output_path, fourcc, fps, (new_width, target_height))
@@ -50,7 +51,7 @@ def resize_video(input_path, output_path, target_height=240):
         return False
 
 def video_to_tensor(video_path):
-    """ 读取 240p 视频并转换为 Tensor """
+    """ 读取 240p 视频并转换为 Tensor，数值范围映射至 [-1, 1] """
     cap = cv2.VideoCapture(video_path)
     frames = []
 
@@ -59,8 +60,9 @@ def video_to_tensor(video_path):
         if not ret:
             break
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # OpenCV 读取的是 BGR，需要转换为 RGB
-        frame = transform(frame)  # (H, W, C) → (C, H, W)
-        frames.append(frame)
+        # [0,255] → [0,1]
+        tensor_frame = transform(frame)  # (H, W, C) → (C, H, W)
+        frames.append(tensor_frame)
 
     cap.release()
 
@@ -68,6 +70,13 @@ def video_to_tensor(video_path):
         return None  # 处理空视频情况
 
     video_tensor = torch.stack(frames)  # (T, C, H, W)
+
+    # 调整为 (C, T, H, W)
+    video_tensor = video_tensor.permute(1, 0, 2, 3)  # 将维度从 (T, C, H, W) 调整为 (C, T, H, W)
+    
+    # 映射到 [-1, 1]
+    video_tensor = 2 * video_tensor - 1  # [0,1] → [-1,1]
+    
     return video_tensor
 
 # 遍历所有视频文件，并加入 tqdm 进度条
@@ -92,7 +101,7 @@ for video_file in tqdm(video_files, desc="Processing Videos", unit="file"):
 
             if video_tensor is not None:
                 torch.save(video_tensor, tensor_path)
-                tqdm.write(f"Saved: {tensor_path}, shape: {video_tensor.shape}")
+                tqdm.write(f"Saved: {tensor_path}, shape: {video_tensor.shape}, dtype: {video_tensor.dtype}, range ~ [-1,1]")
             else:
                 tqdm.write(f"Skipping empty video after resizing: {video_file}")
         else:

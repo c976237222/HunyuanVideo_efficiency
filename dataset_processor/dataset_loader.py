@@ -17,19 +17,9 @@ class VideoTensorDataset(Dataset):
 
     def __getitem__(self, idx):
         tensor_path = os.path.join(self.tensor_dir, self.tensor_files[idx])
-        video_tensor = torch.load(tensor_path)  # (T, C, H, W)
+        video_tensor = torch.load(tensor_path, weights_only=False)  # (C, T, H, W)
 
-        return video_tensor  # 可按需求返回 (video_tensor, self.tensor_files[idx])
+        return video_tensor, self.tensor_files[idx]  # 返回 (Tensor, 文件名)
 
-# ✅ 创建 DataLoader
-batch_size = 4  # 根据显存调整
-shuffle = True  # 是否随机打乱数据
-num_workers = 4  # 适用于多线程加载
 
-dataset = VideoTensorDataset(tensor_dir)
-dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers)
 
-# ✅ 测试 DataLoader
-for batch in dataloader:
-    print(f"Batch Shape: {batch.shape}")  # (B, T, C, H, W)
-    break  # 只打印一个 batch

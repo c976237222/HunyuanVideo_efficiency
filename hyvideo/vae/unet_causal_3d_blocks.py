@@ -629,7 +629,7 @@ class UNetMidBlockCausal3D(nn.Module):
         if any(len(lst) != self.num_resblocks for lst in [epb, epa]):
             raise ValueError(
                 f"[UNetMidBlockCausal3D] T-ops config mismatch: we have {self.num_resblocks} ResnetBlock(s), "
-                f"but got list lengths: {list(map(len, [epb, epa, edb, eda]))}"
+                f"but got list lengths: {list(map(len, [epb, epa]))}"
             )
 
         pool_k = config.get("pool_t_kernel", 2)
@@ -894,6 +894,7 @@ class UpDecoderBlockCausal3D(nn.Module):
                         scale_factor=(sc, 1, 1),  # 仅沿时间维度放大 sc 倍
                         mode=mode
                     )
+                _logger.info(f"UoDecoderBlockCausal3D Interp before ResnetBlock: scale_factor={sc,1,1},hidden_states.shape={hidden_states.shape}, layer={i}")
 
             hidden_states = resnet(hidden_states, temb=temb, scale=scale)
 
@@ -906,7 +907,7 @@ class UpDecoderBlockCausal3D(nn.Module):
                         scale_factor=(sc, 1, 1),
                         mode=mode
                     )
-
+                _logger.info(f"UoDecoderBlockCausal3D Interp before ResnetBlock: scale_factor={sc,1,1},hidden_states.shape={hidden_states.shape}, layer={i}")
         # upsample (原逻辑)
         if self.upsamplers is not None:
             for upsampler in self.upsamplers:
