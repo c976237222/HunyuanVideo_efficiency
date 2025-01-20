@@ -1,5 +1,4 @@
 __pycache__
 /ckpts/**/
-*.json
 *.mp4
 *.pt
