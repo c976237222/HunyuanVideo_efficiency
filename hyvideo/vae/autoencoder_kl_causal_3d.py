@@ -562,7 +562,7 @@ class AutoencoderKLCausal3D(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
         # 这就代表vae学习到的是latent_channels纬度的高斯分布
         posterior = self.encode(x).latent_dist 
         if sample_posterior:
-            z = posterior.sample(generator=generator)
+            z = posterior.sample(generator=generator) #z的形状是B, C, T, H, W,其中C具体数值是latent_channels=4
         else:
             z = posterior.mode()
         dec = self.decode(z).sample #这时候channel是3

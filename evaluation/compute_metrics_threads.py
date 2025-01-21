@@ -1,24 +1,26 @@
 #!/usr/bin/env python3
-# compute_metrics.py
+# compute_metrics_pyav_cuda.py
 
 import argparse
 import os
 import numpy as np
 import math
 from glob import glob
-from skimage.metrics import structural_similarity as compare_ssim
-import imageio
 import lpips
 import torch
 from tqdm import tqdm
 import logging
 from datetime import datetime
 import concurrent.futures
+import av
+import avcuda  # Import PyAV-CUDA for hardware-accelerated video decoding
 import re
+# skimage.metrics 的函数已改名或被移动，但我们这里依然沿用 structural_similarity:
+from skimage.metrics import structural_similarity as compare_ssim
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Compute metrics between two sets of videos.")
+    parser = argparse.ArgumentParser(description="Compute metrics between two sets of videos (using PyAV-CUDA).")
     parser.add_argument("--root1", type=str, required=True,
                         help="Directory of reference/original .mp4 videos.")
     parser.add_argument("--root2", type=str, required=True,
@@ -29,6 +31,8 @@ def parse_args():
                         help="Number of parallel tasks (usually <= #GPUs).")
     parser.add_argument("--batch-size", type=int, default=16,
                         help="Batch size for LPIPS calculation.")
+    parser.add_argument("--cuda-device", type=int, default=0,
+                        help="CUDA device index to use for video decoding.")
     return parser.parse_args()
 
 
@@ -36,6 +40,10 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 
 
 def compute_psnr(img1, img2):
+    """
+    计算 PSNR
+    img1, img2: ndarray(H, W, 3), dtype=uint8
+    """
     mse = np.mean((img1 / 255.0 - img2 / 255.0) ** 2)
     if mse < 1.0e-10:
         return 100
@@ -44,24 +52,32 @@ def compute_psnr(img1, img2):
 
 
 def compute_ssim(img1, img2):
+    """
+    计算 SSIM
+    img1, img2: ndarray(H, W, 3), dtype=uint8
+    """
     # 如果某帧是纯色（全0或全255），为了避免异常情况，给一个默认值
     if np.all(img1 == img1[0, 0, 0]) or np.all(img2 == img2[0, 0, 0]):
         return 1.0
     return compare_ssim(img1, img2, data_range=img1.max() - img1.min(), channel_axis=-1)
 
 
-def read_video(file_path):
+def read_video_pyav_cuda(file_path, cuda_device):
     """
-    读视频并返回帧列表: list of ndarray(H,W,3), dtype=uint8
+    使用 PyAV-CUDA 读取视频并返回帧列表: list of ndarray(H,W,3), dtype=uint8
     """
+    frames_list = []
     try:
-        video = imageio.get_reader(file_path)
-        frames = [frame for frame in video]
-        video.close()
-        return frames
+        with av.open(file_path) as container:
+            stream = container.streams.video[0]
+            avcuda.init_hwcontext(stream.codec_context, cuda_device)
+
+            for avframe in container.decode(stream):
+                frame_tensor = avcuda.to_tensor(avframe, cuda_device)
+                frames_list.append(frame_tensor.cpu().numpy().transpose(1, 2, 0))  # 转为 HWC 格式
     except Exception as e:
-        logging.error(f"读取视频失败 {file_path}: {e}")
-        return []
+        logging.error(f"读取视频失败 {file_path} (PyAV-CUDA): {e}")
+    return frames_list
 
 
 def save_results(results, root1, root2, results_dir):
@@ -81,13 +97,8 @@ def save_results(results, root1, root2, results_dir):
 
 def compute_lpips_multi_video_batch(all_pairs, model, device, batch_size):
     """
-    将多个视频的帧（(f1, f2)）合并成一个列表 all_pairs，
-    然后一次性分批 (batch_size) 送入 LPIPS 模型，返回对应的 LPIPS 值列表，与 all_pairs 长度一致。
-
-    all_pairs: list of (frame1, frame2)，其中 frame1, frame2 是 ndarray(H,W,3) 
-    model: 在 device 上的 LPIPS 模型
-    device: "cuda:0" 等
-    batch_size: 每次 forward 的最大帧数
+    将多个视频的帧 (f1, f2) 合并成一个列表 all_pairs，
+    然后分批 (batch_size) 送入 LPIPS 模型，在 GPU 上计算。
     """
     lpips_values = []
     idx = 0
@@ -112,23 +123,20 @@ def compute_lpips_multi_video_batch(all_pairs, model, device, batch_size):
 
         with torch.no_grad():
             dists = model(batch_1, batch_2)  # shape: [batch] or [batch,1,1,1]
-        # 压平后转到CPU
+
         dists = dists.view(-1).cpu().numpy().tolist()
         lpips_values.extend(dists)
-
         idx = end
 
     return lpips_values
 
 
-def compute_metrics_for_one_folder(root1, folder2, results_base_dir, lpips_model, device, batch_size):
+def compute_metrics_for_one_folder(root1, folder2, results_base_dir, lpips_model, device,
+                                   batch_size, cuda_device):
     """
-    以前：对每个视频单独批量LPIPS。 
-    现在：把该子目录下所有匹配视频的所有帧 (f1, f2) 收集到 all_pairs 里，
-         最后一次性进行LPIPS大批量推理。
-
-    PSNR、SSIM 仍然逐帧计算，并分别保存结果到 metric_psnr, metric_ssim。
-    LPIPS 计算则把所有帧合并后一次批量前向，以减少kernel启动开销。
+    对一个子目录 folder2 (exp_*) 的所有视频与 root1 下的同名视频进行指标计算：
+    1) 逐帧计算 PSNR、SSIM
+    2) 收集帧对到 all_pairs_for_lpips，最后统一 LPIPS 推理
     """
     exp_name = os.path.basename(folder2.rstrip("/"))
     results_dir = os.path.join(results_base_dir, exp_name)
@@ -151,7 +159,7 @@ def compute_metrics_for_one_folder(root1, folder2, results_base_dir, lpips_model
     metric_ssim = []
     metric_lpips_ = []
 
-    # 新增：我们用一个大列表，收集所有帧对 (f1, f2) 用于后面统一LPIPS推理
+    # 收集所有帧对，用于 LPIPS 批量计算
     all_pairs_for_lpips = []
 
     # 1) 逐个视频读取帧，计算PSNR、SSIM，并把帧放到 all_pairs_for_lpips
@@ -159,8 +167,9 @@ def compute_metrics_for_one_folder(root1, folder2, results_base_dir, lpips_model
         vid1_path = os.path.join(root1, filename)
         vid2_path = os.path.join(folder2, filename)
 
-        vid1_frames = read_video(vid1_path)
-        vid2_frames = read_video(vid2_path)
+        # ----------------- 使用 PyAV-CUDA 读取 -----------------
+        vid1_frames = read_video_pyav_cuda(vid1_path, cuda_device)
+        vid2_frames = read_video_pyav_cuda(vid2_path, cuda_device)
 
         len1 = len(vid1_frames)
         len2 = len(vid2_frames)
@@ -189,8 +198,7 @@ def compute_metrics_for_one_folder(root1, folder2, results_base_dir, lpips_model
         for f1, f2 in zip(vid1_frames, vid2_frames):
             all_pairs_for_lpips.append((f1, f2))
 
-    # 2) 现在统一对 all_pairs_for_lpips 做批量 LPIPS
-    #    这样可以把子目录所有视频帧合并，批量越大，越能减少GPU空转。
+    # 2) 统一对 all_pairs_for_lpips 做 LPIPS (批量)
     if all_pairs_for_lpips:
         try:
             lpips_vals = compute_lpips_multi_video_batch(
@@ -220,7 +228,9 @@ def main():
     results_dir = args.results_dir
     num_threads = args.num_threads
     batch_size = args.batch_size
+    cuda_device = args.cuda_device
 
+    # 搜索 exp_* 子目录
     subdirs = []
     for entry in os.scandir(root2):
         if entry.is_dir() and re.match(r"^exp_\w+", entry.name):
@@ -232,11 +242,11 @@ def main():
 
     logging.info(f"在 {root2} 下找到 {len(subdirs)} 个 exp_* 子目录。")
 
-    # 假设有4张GPU，也可改成自己可用的数量
-    devices = [f"cuda:{i}" for i in range(4)]
+    # 如有多张 GPU，可在此自定义多张 GPU 的 device 列表
+    devices = ["cuda:0"]
     num_gpus = len(devices)
 
-    # 加载多份 LPIPS 模型
+    # 加载 LPIPS 模型到各 GPU
     logging.info(f"准备加载 {num_gpus} 个 LPIPS 模型 (AlexNet)，分别放到 {devices} ...")
     lpips_models = []
     for dev in devices:
@@ -245,7 +255,7 @@ def main():
         lpips_models.append(model)
     logging.info("全部 LPIPS 模型加载完毕。")
 
-    # 多线程：给每个子目录分配一个线程，并按顺序映射到GPU
+    # 多线程：给每个子目录分配一个线程，并按顺序映射到 GPU
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
         future_to_subdir = {}
         for i, folder2 in enumerate(subdirs):
@@ -260,7 +270,8 @@ def main():
                 results_dir,
                 lpips_model,
                 device,
-                batch_size
+                batch_size,
+                cuda_device
             )
             future_to_subdir[future] = folder2
 
