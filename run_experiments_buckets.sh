@@ -17,8 +17,8 @@ BATCH_SIZE_loop=4  # 一次同时并行多少个任务
 BATCH_SIZE=1
 NUM_WORKERS=4
 
-CONFIG_JSON_DIR="/home/hanling/HunyuanVideo_efficiency/analysis/config_pool_json"
-OUT_BASE="/mnt/public/wangsiyuan/HunyuanVideo_efficiency/analysis/pool"
+CONFIG_JSON_DIR="/home/hanling/HunyuanVideo_efficiency/analysis/config_stride_json"
+OUT_BASE="/mnt/public/wangsiyuan/HunyuanVideo_efficiency/analysis/stride"
 
 VIDEO_BUCKET_DIR="/mnt/public/wangsiyuan/HunyuanVideo_efficiency/video_buckets"
 

@@ -4,3 +4,7 @@ __pycache__
 *.pt
 /analysis/
 *.txt
+*.gz
+*.xz
+*.jpg
+*.run
