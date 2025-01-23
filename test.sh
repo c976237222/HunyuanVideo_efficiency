@@ -9,6 +9,4 @@ $PYTHON "$PY_METRICS" \
  --root1 "$ORIGINAL_VIDEOS" \
  --root2 "$OUT_BASE" \
  --results-dir "$METRICS_BASE" \
- --num-threads 1 \
- --batch-size 5096 \
- --cuda-device 0
+ --batch-size 2048
