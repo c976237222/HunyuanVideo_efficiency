@@ -8,7 +8,7 @@ set -u  # 使用未定义变量中断
 ##############################################
 
 T_OPS_CONFIG="t_ops_config.json"                # 原始基础 config, 只做参考
-PY_DYNAMIC_ENUM="dynamic_enumeration_stride.py" # 这次用新的脚本
+PY_DYNAMIC_ENUM="dynamic_enumeration_stride_2.py" # 这次用新的脚本
 PY_INFER="infer.py"
 PY_METRICS="evaluation/compute_metrics.py"
 
@@ -18,17 +18,17 @@ VAE_PATH="ckpts/hunyuan-video-t2v-720p/vae"
 ORIGINAL_VIDEOS="video_data/video_data_100_240p"
 
 # 输出目录改为 *_stride
-OUT_BASE="analysis/one_true_stride"
-METRICS_BASE="analysis/one_true_stride_metrics"
+OUT_BASE="analysis/two_true_stride"
+METRICS_BASE="analysis/two_true_stride_metrics"
 
-MAX_FILES=100
+MAX_FILES=10
 BATCH_SIZE=1
 NUM_WORKERS=4
 
 PYTHON="python"
 
 # 确保 config_json_stride 目录存在；若已有残留则清理
-CONFIG_JSON_DIR="/mnt/public/wangsiyuan/HunyuanVideo_efficiency/analysis/config_stride_json"
+CONFIG_JSON_DIR="/mnt/public/wangsiyuan/HunyuanVideo_efficiency/analysis/config_stride2_json"
 mkdir -p "$CONFIG_JSON_DIR"
 rm -rf "$CONFIG_JSON_DIR/exp_*.json"
 rm -rf "$OUT_BASE"/*
@@ -37,7 +37,7 @@ rm -rf "$METRICS_BASE"/*
 # 2. 生成 JSON 配置
 ##############################################
 echo "[INFO] Generating JSON combos with dynamic_enumeration_stride.py ..."
-$PYTHON "$PY_DYNAMIC_ENUM" "$T_OPS_CONFIG"
+$PYTHON "$PY_DYNAMIC_ENUM" "$T_OPS_CONFIG" "$CONFIG_JSON_DIR"
 
 # 检查 JSON 生成成功
 count_json=$(ls "$CONFIG_JSON_DIR"/exp_*.json 2>/dev/null | wc -l || true)
