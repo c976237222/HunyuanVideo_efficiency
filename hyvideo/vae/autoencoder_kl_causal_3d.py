@@ -405,19 +405,18 @@ class AutoencoderKLCausal3D(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
         a_seg = a[:, :, T_a - blend_extent_a : T_a, :, :]  # a的末blend_extent_a帧
         b_seg = b[:, :, :blend_extent_b, :, :]             # b的前blend_extent_b帧
 
-        # 2) 根据三种情况做插值
-        if blend_extent_a > blend_extent_b:
+        # 2) 都是对齐前一段的末尾
+        if blend_extent_a > blend_extent_b: 
             # 对 a_seg 做 downsample, 缩到 blend_extent_b
-            scale_factor = int(blend_extent_b / blend_extent_a)
-            # 仅沿时间维做插值, mode='area' 表示近似平均池化
-            a_seg_res = F.interpolate(
+            scale_factor = int(blend_extent_a / blend_extent_b)
+            a_seg_res = F.avg_pool3d(
                 a_seg,
-                scale_factor=(scale_factor, 1, 1),
-                mode="area"  # 可改为'linear','bicubic'等, 若只想要“pooling”可用'area'
+                kernel_size=(scale_factor, 1, 1),
+                stride=(scale_factor, 1, 1)
             )
         elif blend_extent_a < blend_extent_b:
             # 对 a_seg 做 upsample, 拉到 blend_extent_b
-            scale_factor = blend_extent_b / blend_extent_a
+            scale_factor = int(blend_extent_b / blend_extent_a)
             a_seg_res = F.interpolate(
                 a_seg,
                 scale_factor=(scale_factor, 1, 1),
@@ -553,7 +552,7 @@ class AutoencoderKLCausal3D(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
 
         return DecoderOutput(sample=dec)
 
-    def _get_tile_latent_min_tsize_for_ratio(ratio: int) -> int:
+    def _get_tile_latent_min_tsize_for_ratio(self, ratio: int) -> int:
         """
         示例: ratio=1 => 16, ratio=2 => 8, ratio=4 => 4.
         可根据您的实际网络结构情况灵活改动。
@@ -567,7 +566,7 @@ class AutoencoderKLCausal3D(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
         else:
             raise ValueError(f"Unsupported ratio: {ratio}")
 
-    def _compute_blend_extent(latent_tsize: int, overlap_factor: float) -> int:
+    def _compute_blend_extent(self, latent_tsize: int, overlap_factor: float) -> int:
         """
         根据该 tile 的 latent 尺寸 latent_tsize 以及 overlap_factor(如0.25) 
         来计算 blend_extent = int(latent_tsize * overlap_factor).
@@ -631,7 +630,7 @@ class AutoencoderKLCausal3D(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
             if i > 0:
                 tile = tile[:, :, 1:, :, :]
             
-            row.append(tile)
+            row.append((tile,ratio))
         
         # 同原逻辑：把 row 里所有 tile 做 blend + cat
         result_row = []
@@ -689,7 +688,7 @@ class AutoencoderKLCausal3D(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
             # 若还有下一个 tile，就去取 ratio_next, 否则直接等于 ratio_cur
             if tile_index < num_tiles - 1:
                 ratio_next = self._used_tile_ratios_encode[tile_index + 1]
-                tile_latent_size = self.tile_latent_min_tsize * ((1 / ratio_cur) * (1 - self.tile_overlap_factor) + (1 / ratio_next) * self.tile_overlap_factor)
+                tile_latent_size = int(self.tile_latent_min_tsize * ((1 / ratio_cur) * (1 - self.tile_overlap_factor) + (1 / ratio_next) * self.tile_overlap_factor))
                 tile = z[:, :, i : i + tile_latent_size + 1, :, :]
                 start_next = int((1.0 / ratio_next) * self.tile_overlap_factor * self.tile_latent_min_tsize)
                 if ratio_cur < ratio_next: #上采样
@@ -721,10 +720,10 @@ class AutoencoderKLCausal3D(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
                 logger.info(f"[Decode tile#{tile_index}] ratio_cur={ratio_cur}, ratio_next={ratio_next}, tile_size={tile.shape}")  
             else:
                 ratio_next = None
-                tile_latent_size = self.tile_latent_min_tsize * (1 / ratio_cur)
+                tile_latent_size = int(self.tile_latent_min_tsize * (1 / ratio_cur))
                 tile = z[:, :, i : i + tile_latent_size + 1, :, :]
             
-            i += self.tile_latent_min_tsize * ((1 / ratio_cur) * (1 - self.tile_overlap_factor))
+            i += int(self.tile_latent_min_tsize * (1 / ratio_cur) * (1 - self.tile_overlap_factor))
             
             if adaptor is not None and tile_index < len(self._used_tile_ratios_encode):
                 ratio = self._used_tile_ratios_encode[tile_index]
@@ -733,7 +732,7 @@ class AutoencoderKLCausal3D(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
                 ratio = 1
                 vae_for_tile = self
             
-            logger.info(f"[Decode] tile#{tile_index}, ratio={ratio}, range=({i},{i + self.tile_latent_min_tsize + 1}), shape={tile.shape}")
+            
             
             # 走 if self.use_spatial_tiling ...
             if self.use_spatial_tiling and (tile.shape[-1] > self.tile_latent_min_size or tile.shape[-2] > self.tile_latent_min_size):
@@ -752,6 +751,7 @@ class AutoencoderKLCausal3D(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
         result_row = []
         for i, tile in enumerate(row):
             if i > 0:
+                logger.info(f"[Decode] tile#{i}, shape0={row[i - 1].shape}, shape1={tile.shape}")
                 tile = self.blend_t(row[i - 1], tile, blend_extent)
             result_row.append(tile[:, :, :t_limit, :, :] if i>0 else tile[:, :, :t_limit+1, :, :])
         

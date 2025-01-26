@@ -5,8 +5,8 @@ import torchvision.transforms as transforms
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-video_dir = "/home/hanling/HunyuanVideo_efficiency/video_data/video_data_100_240p_double"
-output_tensor_dir = "/home/hanling/HunyuanVideo_efficiency/video_data/video_data_100_240p_double_tensor"
+video_dir = "/home/hanling/HunyuanVideo_efficiency/video_data/video_data_100_no_240p_double"
+output_tensor_dir = "/home/hanling/HunyuanVideo_efficiency/video_data/video_data_100_no_240p_double_trnsor"
 
 # 确保输出目录存在
 os.makedirs(output_tensor_dir, exist_ok=True)
