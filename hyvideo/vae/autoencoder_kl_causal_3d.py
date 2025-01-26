@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from loguru import logger
 import torch
 import torch.nn as nn
-
+import torch.nn.functional as F
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 
 try:
@@ -83,7 +83,7 @@ class AutoencoderKLCausal3D(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
         super().__init__()
 
         self.time_compression_ratio = time_compression_ratio
-
+        self._used_tile_ratios_encode = []
         self.encoder = EncoderCausal3D(
             in_channels=in_channels,
             out_channels=latent_channels,
@@ -359,7 +359,91 @@ class AutoencoderKLCausal3D(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
             b[:, :, x, :, :] = a[:, :, -blend_extent + x, :, :] * (1 - x / blend_extent) + b[:, :, x, :, :] * (x / blend_extent)
         return b
 
-    def spatial_tiled_encode(self, x: torch.FloatTensor, return_dict: bool = True, return_moments: bool = False) -> AutoencoderKLOutput:
+    def _blend_t_partial(
+        self,
+        a: torch.Tensor,  # [B, C, T_a, H, W]
+        b: torch.Tensor,  # [B, C, T_b, H, W]
+        blend_extent_a: int,
+        blend_extent_b: int,
+    ) -> torch.Tensor:
+        """
+        在时间维度上对 a、b 做融合，分为三种情况:
+        1) T_a > T_b: 对 a 的末 blend_extent_a 帧做 downsample 到 T_b，再融合
+        2) T_a = T_b: 直接融合
+        3) T_a < T_b: 对 a 的末 blend_extent_a 帧做 upsample 到 T_b，再融合
+
+        其中, "downsample" 采用 area 插值, "upsample" 可采用 nearest/linear/bilinear 等.
+        您也可根据需要自行选择插值模式.
+
+        步骤:
+        (1) a_seg = a[:, :, (T_a - blend_extent_a) : T_a, ...]
+            b_seg = b[:, :, :blend_extent_b, ...]
+        (2) 若 blend_extent_a 与 blend_extent_b 不同:
+            - 下采样 (area) 或上采样 (nearest 或 linear 等)
+            - 获得 a_seg_res 形状 [B, C, blend_extent_b, H, W]
+        (3) 对 a_seg_res, b_seg 逐帧线性混合
+            for x in range(blend_extent_b):
+                alpha = x / blend_extent_b
+                b_seg[:, :, x, ...] = a_seg_res[:, :, x, ...]*(1-alpha) + b_seg[:, :, x, ...]*alpha
+        (4) 将融合后的 b_seg 写回 b 的前 blend_extent_b 帧.
+        (5) 返回 b
+
+        说明:
+        - 只改动 b 的 overlap 区域, a 不动.
+        - 如果要同时更新 a, 可在混合时一并改 a_seg_res.
+        - "不要有重叠pooling/插值操作" 即对 a_seg 整段一次插值到与 b_seg 同样帧数.
+        """
+
+        # 1) 截取 a末 blend_extent_a、b前 blend_extent_b
+        T_a = a.shape[2]
+        T_b = b.shape[2]
+
+        if blend_extent_a <= 0 or blend_extent_b <= 0:
+            # 无可混合
+            return b
+
+        a_seg = a[:, :, T_a - blend_extent_a : T_a, :, :]  # a的末blend_extent_a帧
+        b_seg = b[:, :, :blend_extent_b, :, :]             # b的前blend_extent_b帧
+
+        # 2) 根据三种情况做插值
+        if blend_extent_a > blend_extent_b:
+            # 对 a_seg 做 downsample, 缩到 blend_extent_b
+            scale_factor = int(blend_extent_b / blend_extent_a)
+            # 仅沿时间维做插值, mode='area' 表示近似平均池化
+            a_seg_res = F.interpolate(
+                a_seg,
+                scale_factor=(scale_factor, 1, 1),
+                mode="area"  # 可改为'linear','bicubic'等, 若只想要“pooling”可用'area'
+            )
+        elif blend_extent_a < blend_extent_b:
+            # 对 a_seg 做 upsample, 拉到 blend_extent_b
+            scale_factor = blend_extent_b / blend_extent_a
+            a_seg_res = F.interpolate(
+                a_seg,
+                scale_factor=(scale_factor, 1, 1),
+                mode="nearest"  # or 'linear', 看您喜好
+            )
+        else:
+            # blend_extent_a == blend_extent_b, 直接用 a_seg
+            a_seg_res = a_seg
+
+        # 此时 a_seg_res.shape[2] == blend_extent_b
+        # b_seg.shape[2] == blend_extent_b
+        # 方便做逐帧混合
+        T_r = b_seg.shape[2]  # == blend_extent_b
+        for x in range(T_r):
+            alpha = x / T_r
+            b_frame = b_seg[:, :, x, :, :]
+            a_frame = a_seg_res[:, :, x, :, :]
+            blended = a_frame * (1 - alpha) + b_frame * alpha
+            b_seg[:, :, x, :, :] = blended
+
+        # 4) 将融合后的 b_seg 写回 b
+        b[:, :, :blend_extent_b, :, :] = b_seg
+
+        return b
+
+    def spatial_tiled_encode(self, x: torch.FloatTensor, ratio: int = None, return_dict: bool = True, return_moments: bool = False) -> AutoencoderKLOutput:
         r"""Encode a batch of images/videos using a tiled encoder.
 
         When this option is enabled, the VAE will split the input tensor into tiles to compute encoding in several
@@ -378,6 +462,7 @@ class AutoencoderKLCausal3D(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
                 If return_dict is True, a [~models.autoencoder_kl.AutoencoderKLOutput] is returned, otherwise a plain
                 tuple is returned.
         """
+
         #滑动步长
         overlap_size = int(self.tile_sample_min_size * (1 - self.tile_overlap_factor)) #tile_sample_min_size = 256
         #重叠区域
@@ -468,37 +553,118 @@ class AutoencoderKLCausal3D(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
 
         return DecoderOutput(sample=dec)
 
-    def temporal_tiled_encode(self, x: torch.FloatTensor, return_dict: bool = True) -> AutoencoderKLOutput:
+    def _get_tile_latent_min_tsize_for_ratio(ratio: int) -> int:
+        """
+        示例: ratio=1 => 16, ratio=2 => 8, ratio=4 => 4.
+        可根据您的实际网络结构情况灵活改动。
+        """
+        if ratio == 1:
+            return 16
+        elif ratio == 2:
+            return 8
+        elif ratio == 4:
+            return 4
+        else:
+            raise ValueError(f"Unsupported ratio: {ratio}")
 
+    def _compute_blend_extent(latent_tsize: int, overlap_factor: float) -> int:
+        """
+        根据该 tile 的 latent 尺寸 latent_tsize 以及 overlap_factor(如0.25) 
+        来计算 blend_extent = int(latent_tsize * overlap_factor).
+        """
+        return int(latent_tsize * overlap_factor)
+
+    def temporal_tiled_encode(
+        self, 
+        x: torch.FloatTensor, 
+        adaptor=None,             # 新增：可传入 AdaptiveTemporalTiling
+        return_dict: bool = True, 
+        return_moments: bool = False
+    ):
+        """
+        在原先的 temporal_tiled_encode 基础上做修改:
+          - 若 adaptor 不为 None, 则对每个 tile 用 ffprobe 得到码率 -> ratio -> vae_for_tile
+          - 调用 vae_for_tile.encoder or vae_for_tile.spatial_tiled_encode
+          - 同时记录下 ratio
+        其余步骤按原先的拼接逻辑。
+        """
         B, C, T, H, W = x.shape
-        #滑动距离
+        #self.tile_sample_min_tsize=64, self.tile_overlap_factor=0.25,tile_latent_min_tsize=16
         overlap_size = int(self.tile_sample_min_tsize * (1 - self.tile_overlap_factor))
-        #重叠距离 是在latent维度计算的
-        blend_extent = int(self.tile_latent_min_tsize * self.tile_overlap_factor)
-        #有效距离
-        t_limit = self.tile_latent_min_tsize - blend_extent
-
-        # Split the video into tiles and encode them separately.
+        #blend_extent = int(self.tile_latent_min_tsize * self.tile_overlap_factor)
+        #t_limit = self.tile_latent_min_tsize - blend_extent
+        
         row = []
-        for i in range(0, T, overlap_size):#i + self.tile_sample_min_tsize + 1 里的+1是因为tile的最后一个时间步是下一个tile的第一个时间步
-            tile = x[:, :, i: i + self.tile_sample_min_tsize + 1, :, :] #空间快是256*256,时间快是64
+        
+        # 清空一下上一次的记录
+        self._used_tile_ratios_encode = []
+        
+        for i in range(0, T, overlap_size):
+            tile = x[:, :, i: i + self.tile_sample_min_tsize + 1, :, :]
+            
+
+            # ============ 新增部分：决定要用哪个 VAE ============
+            if adaptor is not None:
+                # 先算码率
+                tile_bitrate = adaptor.compute_tile_bitrate(tile)
+                ratio = adaptor.decide_compression_ratio(tile_bitrate)
+                vae_for_tile = adaptor.get_vae_for_ratio(ratio)
+                logger.info(f"[Encode] tile range=({i},{i + self.tile_sample_min_tsize + 1}), shape={tile.shape}, ratio={ratio}")
+                # 记录该 tile 用到的 ratio（以便 decode 时还原）
+                self._used_tile_ratios_encode.append(ratio)
+            else:
+                # 没有传 adaptor，就走默认（1x）
+                ratio = 1
+                vae_for_tile = self  # 即当前这个 VAE 本身
+            # =================================================
+            
+            # 空间 tlie 还是走 if self.use_spatial_tiling ...
             if self.use_spatial_tiling and (tile.shape[-1] > self.tile_sample_min_size or tile.shape[-2] > self.tile_sample_min_size):
-                tile = self.spatial_tiled_encode(tile, return_moments=True)#只返回moments，不返回分布
+                # 要用相应的 VAE 的 spatial_tiled_encode
+                tile = vae_for_tile.spatial_tiled_encode(tile, ratio, return_moments=True)
             else:
-                tile = self.encoder(tile) #传入VAE文件中的encoder，进行了一系列下采样，以及channel维度扩容
-                tile = self.quant_conv(tile)
+                # 常规 encode
+                tile = vae_for_tile.encoder(tile)
+                tile = vae_for_tile.quant_conv(tile)
+
+            # 跟原逻辑相同：如果不是第一个 tile，则去掉第一帧
             if i > 0:
-                tile = tile[:, :, 1:, :, :] #这里面的1是因为tile的最后一个时间步是下一个tile的第一个时间步
+                tile = tile[:, :, 1:, :, :]
+            
             row.append(tile)
+        
+        # 同原逻辑：把 row 里所有 tile 做 blend + cat
         result_row = []
-        for i, tile in enumerate(row):
+        for i, (cur_tile, cur_ratio) in enumerate(row):
+            # 获取本 tile 的latent目标长度(如 ratio=1 =>16,2=>8,4=>4)
+            cur_latent_tsize = self._get_tile_latent_min_tsize_for_ratio(cur_ratio)
+            cur_blend_extent = self._compute_blend_extent(cur_latent_tsize, self.tile_overlap_factor)
+            cur_t_limit = cur_latent_tsize - cur_blend_extent
+
+            # 跟前一个 tile 做部分 overlap blend
             if i > 0:
-                tile = self.blend_t(row[i - 1], tile, blend_extent)
-                result_row.append(tile[:, :, :t_limit, :, :])
+                prev_tile, prev_ratio = row[i-1]
+                prev_latent_tsize = self._get_tile_latent_min_tsize_for_ratio(prev_ratio)
+                prev_blend_extent = self._compute_blend_extent(prev_latent_tsize, self.tile_overlap_factor)
+
+                # 先做 blend
+                # 只混合 overlap_len = min(prev_blend_extent, cur_blend_extent, prev_tile.shape[2], cur_tile.shape[2])
+                cur_tile = self._blend_t_partial(prev_tile, cur_tile, prev_blend_extent, cur_blend_extent)
+
+                # 最后裁剪到 cur_t_limit
+                clipped_tile = cur_tile[:, :, :cur_t_limit, :, :]
             else:
-                result_row.append(tile[:, :, :t_limit + 1, :, :])
- 
-        moments = torch.cat(result_row, dim=2)
+                # 对第0块, 不需要 blend, 只需剪到 cur_t_limit+1 (跟原逻辑对齐)
+                clipped_tile = cur_tile[:, :, : (cur_t_limit + 1), :, :]
+
+            result_row.append(clipped_tile)
+
+        # 最终拼接
+        if len(result_row) > 1:
+            moments = torch.cat(result_row, dim=2)
+        else:
+            moments = result_row[0]
+
 
         posterior = DiagonalGaussianDistribution(moments)
 
@@ -507,34 +673,90 @@ class AutoencoderKLCausal3D(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
 
         return AutoencoderKLOutput(latent_dist=posterior)
 
-    def temporal_tiled_decode(self, z: torch.FloatTensor, return_dict: bool = True) -> Union[DecoderOutput, torch.FloatTensor]:
+    def temporal_tiled_decode(self, z: torch.FloatTensor, return_dict: bool = True, adaptor=None,) -> Union[DecoderOutput, torch.FloatTensor]:
         # Split z into overlapping tiles and decode them separately.
 
         B, C, T, H, W = z.shape
         overlap_size = int(self.tile_latent_min_tsize * (1 - self.tile_overlap_factor))
         blend_extent = int(self.tile_sample_min_tsize * self.tile_overlap_factor)
         t_limit = self.tile_sample_min_tsize - blend_extent
-
+        i = 0
         row = []
-        for i in range(0, T, overlap_size):
-            tile = z[:, :, i: i + self.tile_latent_min_tsize + 1, :, :]
-            if self.use_spatial_tiling and (tile.shape[-1] > self.tile_latent_min_size or tile.shape[-2] > self.tile_latent_min_size):
-                decoded = self.spatial_tiled_decode(tile, return_dict=True).sample
+        tile_index = 0
+        num_tiles = len(self._used_tile_ratios_encode)
+        for tile_index in range(num_tiles):
+            ratio_cur = self._used_tile_ratios_encode[tile_index]
+            # 若还有下一个 tile，就去取 ratio_next, 否则直接等于 ratio_cur
+            if tile_index < num_tiles - 1:
+                ratio_next = self._used_tile_ratios_encode[tile_index + 1]
+                tile_latent_size = self.tile_latent_min_tsize * ((1 / ratio_cur) * (1 - self.tile_overlap_factor) + (1 / ratio_next) * self.tile_overlap_factor)
+                tile = z[:, :, i : i + tile_latent_size + 1, :, :]
+                start_next = int((1.0 / ratio_next) * self.tile_overlap_factor * self.tile_latent_min_tsize)
+                if ratio_cur < ratio_next: #上采样
+                    partial_tile = tile[:, :, start_next:, :, :]
+                    scale_factor_t = int(ratio_next / ratio_cur)
+                    partial_tile_up = F.interpolate(
+                        partial_tile,
+                        scale_factor=(scale_factor_t, 1, 1),
+                        mode='nearest'
+                    )
+                    tile = torch.cat(
+                        [tile[:, :, :start_next, :, :], partial_tile_up],
+                        dim=2
+                    )
+                elif ratio_cur > ratio_next: #下采样
+                    partial_tile = tile[:, :, start_next:, :, :]
+                    scale_factor_t = int(ratio_cur / ratio_next)
+                    partial_tile_down = F.avg_pool3d(
+                        partial_tile,
+                        kernel_size=(scale_factor_t, 1, 1),
+                        stride=(scale_factor_t, 1, 1)
+                    )
+                    tile = torch.cat(
+                        [tile[:, :, :start_next, :, :], partial_tile_down],
+                        dim=2
+                    )
+                else:
+                    pass
+                logger.info(f"[Decode tile#{tile_index}] ratio_cur={ratio_cur}, ratio_next={ratio_next}, tile_size={tile.shape}")  
             else:
-                tile = self.post_quant_conv(tile)
-                decoded = self.decoder(tile)
-            if i > 0:
+                ratio_next = None
+                tile_latent_size = self.tile_latent_min_tsize * (1 / ratio_cur)
+                tile = z[:, :, i : i + tile_latent_size + 1, :, :]
+            
+            i += self.tile_latent_min_tsize * ((1 / ratio_cur) * (1 - self.tile_overlap_factor))
+            
+            if adaptor is not None and tile_index < len(self._used_tile_ratios_encode):
+                ratio = self._used_tile_ratios_encode[tile_index]
+                vae_for_tile = adaptor.get_vae_for_ratio(ratio)
+            else:
+                ratio = 1
+                vae_for_tile = self
+            
+            logger.info(f"[Decode] tile#{tile_index}, ratio={ratio}, range=({i},{i + self.tile_latent_min_tsize + 1}), shape={tile.shape}")
+            
+            # 走 if self.use_spatial_tiling ...
+            if self.use_spatial_tiling and (tile.shape[-1] > self.tile_latent_min_size or tile.shape[-2] > self.tile_latent_min_size):
+                decoded = vae_for_tile.spatial_tiled_decode(tile, return_dict=True).sample
+            else:
+                tile = vae_for_tile.post_quant_conv(tile)
+                decoded = vae_for_tile.decoder(tile)
+            
+            if tile_index > 0:
                 decoded = decoded[:, :, 1:, :, :]
+            
             row.append(decoded)
+            tile_index += 1
+
+        # 同样做 blend + cat
         result_row = []
         for i, tile in enumerate(row):
             if i > 0:
                 tile = self.blend_t(row[i - 1], tile, blend_extent)
-                result_row.append(tile[:, :, :t_limit, :, :])
-            else:
-                result_row.append(tile[:, :, :t_limit + 1, :, :])
-
+            result_row.append(tile[:, :, :t_limit, :, :] if i>0 else tile[:, :, :t_limit+1, :, :])
+        
         dec = torch.cat(result_row, dim=2)
+        
         if not return_dict:
             return (dec,)
 

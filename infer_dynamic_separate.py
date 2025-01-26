@@ -25,6 +25,72 @@ def save_model_architecture_to_file(module, file_path: str):
         write_full_model(module)
 
 
+from hyvideo.vae.adaptive_temporal_tiling import AdaptiveTemporalTiling
+
+
+def infer_vae_adaptive(model: AutoencoderKLCausal3D,
+                       dataloader: DataLoader,
+                       device: str,
+                       output_dir: str,
+                       max_files: int = None,
+                       mp4: bool = False):
+    """
+    利用我们修改过的 temporal_tiled_encode / temporal_tiled_decode，
+    在 encode 阶段对每个 tile 调用 ffprobe -> 选用相应 VAE -> encoder；
+    在 decode 阶段，对应地选用相同 VAE -> decoder。
+    """
+    model.to(device)
+    model.eval()
+
+    # 初始化适配工具
+    adaptor = AdaptiveTemporalTiling(
+        vae_ckpt_path="ckpts/hunyuan-video-t2v-720p/vae",
+        device=device,
+        vae_precision="fp16",
+    )
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    for batch_idx, (video_tensor, file_name) in enumerate(dataloader):
+        if max_files is not None and batch_idx >= max_files:
+            break
+
+        # 去掉 .pt 后缀
+        file_name = file_name[0].replace(".pt", "")
+
+        # Move to device
+        video_tensor = video_tensor.to(device, dtype=torch.float16)
+        logger.info(f"Processing {file_name}, video shape: {video_tensor.shape}")
+
+        with torch.no_grad():
+            # =========== Encode阶段 ===========
+            posterior_out = model.temporal_tiled_encode(
+                x=video_tensor,
+                adaptor=adaptor,  # 传入我们自适应类
+                return_dict=True
+            )
+            # posterior_out 是 AutoencoderKLOutput
+            posterior = posterior_out.latent_dist  # 里面包含 mean/var
+
+            # =========== Decode阶段 ===========
+            reconstructed_video = model.temporal_tiled_decode(
+                z=posterior.mode(),  # 或 sample() 取随机
+                adaptor=adaptor,     # 同样传入
+                return_dict=True
+            ).sample
+
+            # Save the reconstructed video
+            reconstructed_video = reconstructed_video.cpu().float()
+            output_path = os.path.join(output_dir, f"{file_name}.pt")
+            torch.save(reconstructed_video, output_path)
+            logger.info(f"Saved reconstructed video to {output_path}, shape: {reconstructed_video.shape}")
+
+            # Optionally save mp4
+            if mp4:
+                save_path = os.path.join(output_dir, f"{file_name}.mp4")
+                save_videos_grid(reconstructed_video, save_path, fps=24, rescale=True)
+                logger.info(f'Sample saved to: {save_path}')
+
 def infer_vae(model: AutoencoderKLCausal3D,
               dataloader: DataLoader,
               device: str,
@@ -110,7 +176,6 @@ def main():
         device=device,
         t_ops_config_path=args.config_json,
         test=True,
-        use_adaptive=args.use_adaptive 
     )
     logger.info("VAE loaded.")
 
@@ -122,7 +187,7 @@ def main():
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
 
     # 运行推理
-    infer_vae(vae, dataloader, device, args.output_dir, max_files=args.max_files, mp4=args.mp4)
+    infer_vae_adaptive(vae, dataloader, device, args.output_dir, max_files=args.max_files, mp4=args.mp4)
 
 
 if __name__ == "__main__":

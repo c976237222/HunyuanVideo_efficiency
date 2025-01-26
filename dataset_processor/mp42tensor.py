@@ -6,9 +6,9 @@ from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # 📂 文件路径
-video_dir = "/mnt/public/wangsiyuan/HunyuanVideo_efficiency/video_data/video_data_5000"
-output_video_dir = "/mnt/public/wangsiyuan/HunyuanVideo_efficiency/video_data/video_data_5000_240p"
-output_tensor_dir = "/mnt/public/wangsiyuan/HunyuanVideo_efficiency/video_data/video_data_5000_240p_tensor"
+video_dir = "/home/hanling/HunyuanVideo_efficiency/video_data/video_data_100_240p_double"
+output_video_dir = "/home/hanling/HunyuanVideo_efficiency/video_data/video_data_100_240p_double"
+output_tensor_dir = "/home/hanling/HunyuanVideo_efficiency/video_data/video_data_100_240p_double_tensor"
 
 # 确保输出目录存在
 os.makedirs(output_video_dir, exist_ok=True)
