@@ -18,28 +18,27 @@ BATCH_SIZE=1
 NUM_WORKERS=4
 
 CONFIG_JSON_DIR="/home/hanling/HunyuanVideo_efficiency/analysis/config_stride_json"
-OUT_BASE="/mnt/public/wangsiyuan/HunyuanVideo_efficiency/analysis/stride"
-
-VIDEO_BUCKET_DIR="/mnt/public/wangsiyuan/HunyuanVideo_efficiency/video_buckets"
+OUT_BASE="/mnt/public/wangsiyuan/HunyuanVideo_efficiency/analysis/stride_InterEntropy_buckets"
+PT_ROOT="/home/hanling/HunyuanVideo_efficiency/video_data/video_data_100_240p_tensor"
+VIDEO_BUCKET_DIR="/mnt/public/wangsiyuan/HunyuanVideo_efficiency/metric_buckets/InterEntropy_buckets"
 
 TXT_FILES=(
-  "Low_500_kbps.txt"
-  "Medium_1500_2000_kbps.txt"
-  "High_2500_3000_kbps.txt"
-  "High_3000_3500_kbps.txt"
+  "Low_InterEntropy_2-4.txt"
+  "Medium_InterEntropy_4-6.txt"
+  "Very_Low_InterEntropy_lt2.txt"
 )
 
 NUM_VIDEOS_PER_TXT=10
 
 # .pt 文件所在主目录
-PT_ROOT="/mnt/public/wangsiyuan/HunyuanVideo_efficiency/video_data/video_data_5000_240p_tensor"
+
 
 ##############################################
 # 2. 先给每个 bucket 创建一个固定软链接目录 (只做一次)
 ##############################################
 
 declare -A SYMLINK_DIR_MAP
-mkdir -p /tmp/video_list_temp
+mkdir -p /home/hanling/HunyuanVideo_efficiency/tmp/video_list_temp
 
 for txt_file in "${TXT_FILES[@]}"; do
   bucket_name="${txt_file%.txt}"
@@ -49,11 +48,11 @@ for txt_file in "${TXT_FILES[@]}"; do
   bucket_name="${bucket_name//</_}"
   bucket_name="${bucket_name//>/_}"
 
-  tmp_list="/tmp/video_list_temp/${bucket_name}.list"
+  tmp_list="/home/hanling/HunyuanVideo_efficiency/tmp/video_list_temp/${bucket_name}.list"
   head -n "$NUM_VIDEOS_PER_TXT" "${VIDEO_BUCKET_DIR}/${txt_file}" > "$tmp_list"
 
   # 固定的 symlink 目录
-  symlink_dir="/home/hanling/HunyuanVideo_efficiency/video_data/video_data_5000_240p_tensor/symlink_${bucket_name}"
+  symlink_dir="/home/hanling/HunyuanVideo_efficiency/video_data/video_data_100_240p_tensor/symlink_${bucket_name}"
   rm -rf "$symlink_dir"
   mkdir -p "$symlink_dir"
 
