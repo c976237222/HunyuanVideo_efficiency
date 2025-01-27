@@ -426,9 +426,6 @@ class AutoencoderKLCausal3D(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
             # blend_extent_a == blend_extent_b, 直接用 a_seg
             a_seg_res = a_seg
 
-        # 此时 a_seg_res.shape[2] == blend_extent_b
-        # b_seg.shape[2] == blend_extent_b
-        # 方便做逐帧混合
         T_r = b_seg.shape[2]  # == blend_extent_b
         for x in range(T_r):
             alpha = x / T_r
