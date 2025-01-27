@@ -8,3 +8,6 @@ __pycache__
 *.xz
 *.jpg
 *.run
+*.list
+*.zip.*
+*.zip
