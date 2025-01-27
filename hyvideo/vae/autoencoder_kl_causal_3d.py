@@ -471,6 +471,7 @@ class AutoencoderKLCausal3D(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
             row = []
             for j in range(0, x.shape[-1], overlap_size):
                 tile = x[:, :, :, i: i + self.tile_sample_min_size, j: j + self.tile_sample_min_size]
+                # print(f"DEBUG spatialencode tile {i},{j} shape: {tile.shape}")
                 tile = self.encoder(tile)
                 tile = self.quant_conv(tile)
                 row.append(tile)
@@ -594,20 +595,28 @@ class AutoencoderKLCausal3D(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
         
         # 清空一下上一次的记录
         self._used_tile_ratios_encode = []
+        self._used_tile_size_encode = []
+        self._tile_first_frame=[]
         
-        for i in range(0, T, overlap_size):
-            tile = x[:, :, i: i + self.tile_sample_min_tsize + 1, :, :]
+        avaliable_ratios=[1,2,4]
+        
+        for tile_ind,st_frame in enumerate(range(1, T, overlap_size)):
+            tile = x[:, :, st_frame-1: st_frame + self.tile_sample_min_tsize, :, :] # 向前取一帧
             
 
             # ============ 新增部分：决定要用哪个 VAE ============
             if adaptor is not None:
                 # 先算码率
-                tile_bitrate = adaptor.compute_tile_bitrate(tile)
+                tile_bitrate = adaptor.compute_tile_bitrate(tile) # SSIM/PSNR
                 ratio = adaptor.decide_compression_ratio(tile_bitrate)
+                # ratio=avaliable_ratios[tile_ind%3]
+                # ratio=2
                 vae_for_tile = adaptor.get_vae_for_ratio(ratio)
-                logger.info(f"[Encode] tile range=({i},{i + self.tile_sample_min_tsize + 1}), shape={tile.shape}, ratio={ratio}")
+                logger.info(f"[Encode] tile range=({st_frame},{st_frame + self.tile_sample_min_tsize + 1}), shape={tile.shape}, ratio={ratio}")
+                
                 # 记录该 tile 用到的 ratio（以便 decode 时还原）
                 self._used_tile_ratios_encode.append(ratio)
+                
             else:
                 # 没有传 adaptor，就走默认（1x）
                 ratio = 1
@@ -624,36 +633,41 @@ class AutoencoderKLCausal3D(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
                 tile = vae_for_tile.quant_conv(tile)
 
             # 跟原逻辑相同：如果不是第一个 tile，则去掉第一帧
-            if i > 0:
+            # 不要做这个，因为对不齐，保留下来
+            self._tile_first_frame.append(tile[:, :, 0:1, :, :])
+            if tile_ind > 0:
                 tile = tile[:, :, 1:, :, :]
-            
             row.append((tile,ratio))
         
         # 同原逻辑：把 row 里所有 tile 做 blend + cat
         result_row = []
-        for i, (cur_tile, cur_ratio) in enumerate(row):
+        for tile_ind, (cur_tile, cur_ratio) in enumerate(row):
             # 获取本 tile 的latent目标长度(如 ratio=1 =>16,2=>8,4=>4)
             cur_latent_tsize = self._get_tile_latent_min_tsize_for_ratio(cur_ratio)
-            cur_blend_extent = self._compute_blend_extent(cur_latent_tsize, self.tile_overlap_factor)
+            # cur_blend_extent = self._compute_blend_extent(cur_latent_tsize, self.tile_overlap_factor)
+            cur_blend_extent=int(cur_latent_tsize * self.tile_overlap_factor)
             cur_t_limit = cur_latent_tsize - cur_blend_extent
-
+            DEBUG=False
             # 跟前一个 tile 做部分 overlap blend
-            if i > 0:
-                prev_tile, prev_ratio = row[i-1]
-                prev_latent_tsize = self._get_tile_latent_min_tsize_for_ratio(prev_ratio)
-                prev_blend_extent = self._compute_blend_extent(prev_latent_tsize, self.tile_overlap_factor)
+            if tile_ind > 0:
+                if not DEBUG:
+                    prev_tile, prev_ratio = row[tile_ind-1]
+                    prev_latent_tsize = self._get_tile_latent_min_tsize_for_ratio(prev_ratio)
+                    prev_blend_extent = self._compute_blend_extent(prev_latent_tsize, self.tile_overlap_factor)
 
-                # 先做 blend
-                # 只混合 overlap_len = min(prev_blend_extent, cur_blend_extent, prev_tile.shape[2], cur_tile.shape[2])
-                cur_tile = self._blend_t_partial(prev_tile, cur_tile, prev_blend_extent, cur_blend_extent)
+                    # 先做 blend
+                    # 只混合 overlap_len = min(prev_blend_extent, cur_blend_extent, prev_tile.shape[2], cur_tile.shape[2])
+                    cur_tile = self._blend_t_partial(prev_tile, cur_tile, prev_blend_extent, cur_blend_extent)
 
                 # 最后裁剪到 cur_t_limit
                 clipped_tile = cur_tile[:, :, :cur_t_limit, :, :]
             else:
                 # 对第0块, 不需要 blend, 只需剪到 cur_t_limit+1 (跟原逻辑对齐)
                 clipped_tile = cur_tile[:, :, : (cur_t_limit + 1), :, :]
-
+            # clipped_tile = cur_tile[:, :, : (cur_t_limit + 1), :, :]
+            self._used_tile_size_encode.append(clipped_tile.shape[2])
             result_row.append(clipped_tile)
+            # print(f"DEBUG temporalencode tile {tile_ind} shape: {clipped_tile.shape}")
 
         # 最终拼接
         if len(result_row) > 1:
@@ -670,60 +684,95 @@ class AutoencoderKLCausal3D(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
         return AutoencoderKLOutput(latent_dist=posterior)
 
     def temporal_tiled_decode(self, z: torch.FloatTensor, return_dict: bool = True, adaptor=None,) -> Union[DecoderOutput, torch.FloatTensor]:
+        
+        # decoded = adaptor.vae_2x.spatial_tiled_decode(z, return_dict=True).sample
+        # return DecoderOutput(sample=decoded)
+        
         # Split z into overlapping tiles and decode them separately.
-
         B, C, T, H, W = z.shape
         overlap_size = int(self.tile_latent_min_tsize * (1 - self.tile_overlap_factor))
+        latent_blend_extent = int(self.tile_latent_min_tsize * self.tile_overlap_factor)
         blend_extent = int(self.tile_sample_min_tsize * self.tile_overlap_factor)
         t_limit = self.tile_sample_min_tsize - blend_extent
         i = 0
         row = []
-        tile_index = 0
         num_tiles = len(self._used_tile_ratios_encode)
-        for tile_index in range(num_tiles):
-            ratio_cur = self._used_tile_ratios_encode[tile_index]
-            # 若还有下一个 tile，就去取 ratio_next, 否则直接等于 ratio_cur
-            if tile_index < num_tiles - 1:
-                ratio_next = self._used_tile_ratios_encode[tile_index + 1]
-                tile_latent_size = int(self.tile_latent_min_tsize * ((1 / ratio_cur) * (1 - self.tile_overlap_factor) + (1 / ratio_next) * self.tile_overlap_factor))
-                tile = z[:, :, i : i + tile_latent_size + 1, :, :]
-                start_next = int((1.0 / ratio_next) * self.tile_overlap_factor * self.tile_latent_min_tsize)
-                if ratio_cur < ratio_next: #上采样
-                    partial_tile = tile[:, :, start_next:, :, :]
-                    scale_factor_t = int(ratio_next / ratio_cur)
-                    partial_tile_up = F.interpolate(
-                        partial_tile,
-                        scale_factor=(scale_factor_t, 1, 1),
-                        mode='nearest'
-                    )
-                    tile = torch.cat(
-                        [tile[:, :, :start_next, :, :], partial_tile_up],
-                        dim=2
-                    )
-                elif ratio_cur > ratio_next: #下采样
-                    partial_tile = tile[:, :, start_next:, :, :]
-                    scale_factor_t = int(ratio_cur / ratio_next)
-                    partial_tile_down = F.avg_pool3d(
-                        partial_tile,
-                        kernel_size=(scale_factor_t, 1, 1),
-                        stride=(scale_factor_t, 1, 1)
-                    )
-                    tile = torch.cat(
-                        [tile[:, :, :start_next, :, :], partial_tile_down],
-                        dim=2
-                    )
-                else:
-                    pass
-                logger.info(f"[Decode tile#{tile_index}] ratio_cur={ratio_cur}, ratio_next={ratio_next}, tile_size={tile.shape}")  
-            else:
-                ratio_next = None
-                tile_latent_size = int(self.tile_latent_min_tsize * (1 / ratio_cur))
-                tile = z[:, :, i : i + tile_latent_size + 1, :, :]
+        for tile_ind in range(num_tiles):
+            cur_ratio = self._used_tile_ratios_encode[tile_ind]
+            # tile_latent_size = int(self.tile_latent_min_tsize * ((1 / ratio_cur) * (1 - self.tile_overlap_factor) + (1 / ratio_next) * self.tile_overlap_factor))
+            tile_latent_size = self._used_tile_size_encode[tile_ind]
             
-            i += int(self.tile_latent_min_tsize * (1 / ratio_cur) * (1 - self.tile_overlap_factor))
+            tile = z[:, :, i : i + tile_latent_size, :, :]
+            print(f"DEBUG tile_ind={tile_ind} fetch tile size = {i}:{i+tile_latent_size}")
             
-            if adaptor is not None and tile_index < len(self._used_tile_ratios_encode):
-                ratio = self._used_tile_ratios_encode[tile_index]
+            if tile_ind!=0:
+                # prev_ratio=self._used_tile_ratios_encode[tile_ind-1]
+                # if prev_ratio<cur_ratio:
+                #     n_pre_extend=cur_ratio//prev_ratio
+                #     pre_extend=z[:, :, i - n_pre_extend: i, :, :]
+                #     pre_extend=F.avg_pool3d(pre_extend, kernel_size=(n_pre_extend, 1, 1), stride=(n_pre_extend, 1, 1))
+                # elif prev_ratio>cur_ratio:
+                #     pre_extend=(z[:,:, i - 1: i, :, :]+tile[:,:,0:1,:,:])/2
+                # tile = torch.cat([pre_extend, tile], dim=2)
+                first_frame=self._tile_first_frame[tile_ind]
+                posterior = DiagonalGaussianDistribution(first_frame)
+                first_frame=posterior.mode()
+
+                tile=torch.cat([first_frame,tile],dim=2)
+            
+            print(f"DEBUG tile_ind={tile_ind} fetch tile size = {tile.shape}")
+            
+            if tile_ind < num_tiles - 1:
+                
+                next_ratio = self._used_tile_ratios_encode[tile_ind + 1]
+                cur_blend_extent = latent_blend_extent // cur_ratio
+                next_blend_extent = latent_blend_extent // next_ratio
+                extend=z[:, :, i + tile_latent_size: i +tile_latent_size+next_blend_extent, :, :]
+                if cur_ratio<next_ratio and cur_blend_extent!=0:
+                    extend=F.interpolate(extend, size=(cur_blend_extent, H, W), mode='area')
+                elif cur_ratio>next_ratio and cur_blend_extent!=0:
+                    extend=F.avg_pool3d(extend, kernel_size=(cur_blend_extent, 1, 1), stride=(cur_blend_extent, 1, 1))
+                tile=torch.cat([tile,extend],dim=2)
+                # tile=torch.cat([tile,torch.zeros_like(extend)],dim=2)
+                print(f"DEBUG extend {extend.shape} to tile  = {tile.shape} [cur_blend_extent={cur_blend_extent}, next_blend_extent={next_blend_extent}]")
+            # start_next = int((1.0 / next_ratio) * self.tile_overlap_factor * self.tile_latent_min_tsize)
+            # if cur_ratio < next_ratio: #上采样
+            #     partial_tile = tile[:, :, start_next:, :, :]
+            #     scale_factor_t = int(next_ratio / cur_ratio)
+            #     partial_tile_up = F.interpolate(
+            #         partial_tile,
+            #         scale_factor=(scale_factor_t, 1, 1),
+            #         mode='nearest'
+            #     )
+            #     tile = torch.cat(
+            #         [tile[:, :, :start_next, :, :], partial_tile_up],
+            #         dim=2
+            #     )
+            # elif cur_ratio > next_ratio: #下采样
+            #     partial_tile = tile[:, :, start_next:, :, :]
+            #     scale_factor_t = int(cur_ratio / next_ratio)
+            #     partial_tile_down = F.avg_pool3d(
+            #         partial_tile,
+            #         kernel_size=(scale_factor_t, 1, 1),
+            #         stride=(scale_factor_t, 1, 1)
+            #     )
+            #     tile = torch.cat(
+            #         [tile[:, :, :start_next, :, :], partial_tile_down],
+            #         dim=2
+            #     )
+            # else:
+            #     pass
+            # logger.info(f"[Decode tile#{tile_ind}] ratio_cur={cur_ratio}, ratio_next={next_ratio}, tile_size={tile.shape}")  
+            # else:
+            #     next_ratio = None
+            #     tile_latent_size = int(self.tile_latent_min_tsize * (1 / cur_ratio))
+            #     tile = z[:, :, i :, :, :]
+            
+            # i += int(self.tile_latent_min_tsize * (1 / ratio_cur) * (1 - self.tile_overlap_factor))
+            i += self._used_tile_size_encode[tile_ind]
+            
+            if adaptor is not None and tile_ind < len(self._used_tile_ratios_encode):
+                ratio = self._used_tile_ratios_encode[tile_ind]
                 vae_for_tile = adaptor.get_vae_for_ratio(ratio)
             else:
                 ratio = 1
@@ -738,11 +787,11 @@ class AutoencoderKLCausal3D(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
                 tile = vae_for_tile.post_quant_conv(tile)
                 decoded = vae_for_tile.decoder(tile)
             
-            if tile_index > 0:
+            if tile_ind > 0:
                 decoded = decoded[:, :, 1:, :, :]
             
             row.append(decoded)
-            tile_index += 1
+            tile_ind += 1
 
         # 同样做 blend + cat
         result_row = []
@@ -753,6 +802,8 @@ class AutoencoderKLCausal3D(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
             result_row.append(tile[:, :, :t_limit, :, :] if i>0 else tile[:, :, :t_limit+1, :, :])
         
         dec = torch.cat(result_row, dim=2)
+        # dec = row[1]
+        # dec = torch.cat(row, dim=2)
         
         if not return_dict:
             return (dec,)
