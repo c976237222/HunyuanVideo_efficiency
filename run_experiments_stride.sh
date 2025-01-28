@@ -21,7 +21,7 @@ ORIGINAL_VIDEOS="video_data/video_data_100_240p"
 OUT_BASE="analysis/two_true_stride"
 METRICS_BASE="analysis/two_true_stride_metrics"
 
-MAX_FILES=10
+MAX_FILES=100
 BATCH_SIZE=1
 NUM_WORKERS=4
 
@@ -29,15 +29,15 @@ PYTHON="python"
 
 # 确保 config_json_stride 目录存在；若已有残留则清理
 CONFIG_JSON_DIR="/mnt/public/wangsiyuan/HunyuanVideo_efficiency/analysis/config_stride2_json"
-mkdir -p "$CONFIG_JSON_DIR"
-rm -rf "$CONFIG_JSON_DIR/exp_*.json"
+#mkdir -p "$CONFIG_JSON_DIR"
+#rm -rf "$CONFIG_JSON_DIR/exp_*.json"
 rm -rf "$OUT_BASE"/*
 rm -rf "$METRICS_BASE"/*
-##############################################
-# 2. 生成 JSON 配置
-##############################################
-echo "[INFO] Generating JSON combos with dynamic_enumeration_stride.py ..."
-$PYTHON "$PY_DYNAMIC_ENUM" "$T_OPS_CONFIG" "$CONFIG_JSON_DIR"
+###############################################
+## 2. 生成 JSON 配置
+###############################################
+#echo "[INFO] Generating JSON combos with dynamic_enumeration_stride.py ..."
+#$PYTHON "$PY_DYNAMIC_ENUM" "$T_OPS_CONFIG" "$CONFIG_JSON_DIR"
 
 # 检查 JSON 生成成功
 count_json=$(ls "$CONFIG_JSON_DIR"/exp_*.json 2>/dev/null | wc -l || true)
@@ -79,16 +79,16 @@ for CONFIG_JSON in "$CONFIG_JSON_DIR"/exp_*.json; do
     --mp4 \
     || { echo "[ERROR] infer.py failed for $CONFIG_JSON"; exit 1; }
 
-  # 2) 计算指标
-  echo "=> Compute Metrics: $PY_METRICS"
-  $PYTHON "$PY_METRICS" \
-    --root1 "$ORIGINAL_VIDEOS" \
-    --root2 "$EXP_OUT_DIR" \
-    --results-dir "$EXP_METRICS_DIR" \
-    || { echo "[ERROR] compute_metrics.py failed for $CONFIG_JSON"; exit 1; }
+  ## 2) 计算指标
+  #echo "=> Compute Metrics: $PY_METRICS"
+  #$PYTHON "$PY_METRICS" \
+  #  --root1 "$ORIGINAL_VIDEOS" \
+  #  --root2 "$EXP_OUT_DIR" \
+  #  --results-dir "$EXP_METRICS_DIR" \
+  #  || { echo "[ERROR] compute_metrics.py failed for $CONFIG_JSON"; exit 1; }
 
-  echo "[INFO] Done for $CONFIG_JSON"
-  echo
+  #echo "[INFO] Done for $CONFIG_JSON"
+  #echo
 done
 
 echo "[INFO] All experiments finished!"
