@@ -66,10 +66,10 @@ def parse_fps_width_height_from_filename(yuv_filename):
 base_dir = "/mnt/public/wangsiyuan/k8bfn0qsj9fs1rwnc2x75z6t7/BVI-HFR"
 output_base = "/mnt/public/wangsiyuan/HunyuanVideo_efficiency/video_data"
 resolution_tag = f"{args.target_height}p" if args.target_height else "original"
-
-video_dir = os.path.join(base_dir, "15hz")  # 假设此目录下存放 .yuv 文件
-output_video_dir = os.path.join(base_dir, f"processed_{resolution_tag}_videos")
-output_tensor_dir = os.path.join(base_dir, f"processed_{resolution_tag}_tensors")
+hz = "30hz"
+video_dir = os.path.join(base_dir, f"{hz}")  # 假设此目录下存放 .yuv 文件
+output_video_dir = os.path.join(output_base, f"{hz}_{resolution_tag}_videos")
+output_tensor_dir = os.path.join(output_base, f"{hz}_{resolution_tag}_tensors")
 
 # 确保输出目录存在
 os.makedirs(output_video_dir, exist_ok=True)
