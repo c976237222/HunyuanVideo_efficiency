@@ -181,7 +181,7 @@ def main():
 
     # 如果你想启用 tiling，可在此处启用
     vae.enable_tiling()
-
+    vae.tile_overlap_factor=0
     # 加载数据集
     dataset = VideoTensorDataset(args.tensor_dir)
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
