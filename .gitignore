@@ -12,3 +12,6 @@ __pycache__
 *.list
 *.png
 output
+*.csv
+*.log
+*.pdf

@@ -471,7 +471,7 @@ class AutoencoderKLCausal3D(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
             row = []
             for j in range(0, x.shape[-1], overlap_size):
                 tile = x[:, :, :, i: i + self.tile_sample_min_size, j: j + self.tile_sample_min_size]
-                # print(f"DEBUG spatialencode tile {i},{j} shape: {tile.shape}")
+                # #print(f"DEBUG spatialencode tile {i},{j} shape: {tile.shape}")
                 tile = self.encoder(tile)
                 tile = self.quant_conv(tile)
                 row.append(tile)
@@ -597,7 +597,7 @@ class AutoencoderKLCausal3D(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
         self._used_tile_ratios_encode = []
         self._used_tile_size_encode = []
         self._tile_first_frame=[]
-        
+        self.tiles_ci = []
         avaliable_ratios=[1,2,4]
         
         for tile_ind,st_frame in enumerate(range(1, T, overlap_size)):
@@ -607,13 +607,14 @@ class AutoencoderKLCausal3D(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
             # ============ 新增部分：决定要用哪个 VAE ============
             if adaptor is not None:
                 # 先算码率
-                tile_bitrate = adaptor.compute_tile_bitrate(tile) # SSIM/PSNR
-                ratio = adaptor.decide_compression_ratio(tile_bitrate)
-                # ratio=avaliable_ratios[tile_ind%3]
-                # ratio=2
+                #tile_ci = adaptor.compute_tile_ssim(tile) # SSIM/PSNR
+                #self.tiles_ci.append(tile_ci)
+                #ratio = adaptor.decide_compression_ratio_ssim(tile_ci)
+                tile_ci = 0.0
+                self.tiles_ci.append(tile_ci)
+                ratio=1
                 vae_for_tile = adaptor.get_vae_for_ratio(ratio)
                 logger.info(f"[Encode] tile range=({st_frame},{st_frame + self.tile_sample_min_tsize + 1}), shape={tile.shape}, ratio={ratio}")
-                
                 # 记录该 tile 用到的 ratio（以便 decode 时还原）
                 self._used_tile_ratios_encode.append(ratio)
                 
@@ -660,18 +661,21 @@ class AutoencoderKLCausal3D(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
                     cur_tile = self._blend_t_partial(prev_tile, cur_tile, prev_blend_extent, cur_blend_extent)
 
                 # 最后裁剪到 cur_t_limit
+                #print(f"DEBUG temporalencode tile {tile_ind} shape: {cur_tile.shape}")
                 clipped_tile = cur_tile[:, :, :cur_t_limit, :, :]
             else:
                 # 对第0块, 不需要 blend, 只需剪到 cur_t_limit+1 (跟原逻辑对齐)
                 clipped_tile = cur_tile[:, :, : (cur_t_limit + 1), :, :]
             # clipped_tile = cur_tile[:, :, : (cur_t_limit + 1), :, :]
             self._used_tile_size_encode.append(clipped_tile.shape[2])
+            
             result_row.append(clipped_tile)
-            # print(f"DEBUG temporalencode tile {tile_ind} shape: {clipped_tile.shape}")
+            # #print(f"DEBUG temporalencode tile {tile_ind} shape: {clipped_tile.shape}")
 
         # 最终拼接
         if len(result_row) > 1:
             moments = torch.cat(result_row, dim=2)
+            #print(f"DEBUG temporalencode moments shape: {moments.shape}")
         else:
             moments = result_row[0]
 
@@ -681,7 +685,7 @@ class AutoencoderKLCausal3D(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
         if not return_dict:
             return (posterior,)
 
-        return AutoencoderKLOutput(latent_dist=posterior)
+        return AutoencoderKLOutput(latent_dist=posterior, row=row, tiles_ci=self.tiles_ci)
 
     def temporal_tiled_decode(self, z: torch.FloatTensor, return_dict: bool = True, adaptor=None,) -> Union[DecoderOutput, torch.FloatTensor]:
         
@@ -703,7 +707,7 @@ class AutoencoderKLCausal3D(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
             tile_latent_size = self._used_tile_size_encode[tile_ind]
             
             tile = z[:, :, i : i + tile_latent_size, :, :]
-            print(f"DEBUG tile_ind={tile_ind} fetch tile size = {i}:{i+tile_latent_size}")
+            #print(f"DEBUG tile_ind={tile_ind} fetch tile size = {i}:{i+tile_latent_size}")
             
             if tile_ind!=0:
                 # prev_ratio=self._used_tile_ratios_encode[tile_ind-1]
@@ -720,7 +724,7 @@ class AutoencoderKLCausal3D(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
 
                 tile=torch.cat([first_frame,tile],dim=2)
             
-            print(f"DEBUG tile_ind={tile_ind} fetch tile size = {tile.shape}")
+            #print(f"DEBUG tile_ind={tile_ind} fetch tile size = {tile.shape}")
             
             if tile_ind < num_tiles - 1:
                 
@@ -734,7 +738,7 @@ class AutoencoderKLCausal3D(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
                     extend=F.avg_pool3d(extend, kernel_size=(cur_blend_extent, 1, 1), stride=(cur_blend_extent, 1, 1))
                 tile=torch.cat([tile,extend],dim=2)
                 # tile=torch.cat([tile,torch.zeros_like(extend)],dim=2)
-                print(f"DEBUG extend {extend.shape} to tile  = {tile.shape} [cur_blend_extent={cur_blend_extent}, next_blend_extent={next_blend_extent}]")
+                #print(f"DEBUG extend {extend.shape} to tile  = {tile.shape} [cur_blend_extent={cur_blend_extent}, next_blend_extent={next_blend_extent}]")
             # start_next = int((1.0 / next_ratio) * self.tile_overlap_factor * self.tile_latent_min_tsize)
             # if cur_ratio < next_ratio: #上采样
             #     partial_tile = tile[:, :, start_next:, :, :]
@@ -786,7 +790,7 @@ class AutoencoderKLCausal3D(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
             else:
                 tile = vae_for_tile.post_quant_conv(tile)
                 decoded = vae_for_tile.decoder(tile)
-            
+            #print(f"DEBUG tile_ind={tile_ind} decode tile size = {decoded.shape}")
             if tile_ind > 0:
                 decoded = decoded[:, :, 1:, :, :]
             

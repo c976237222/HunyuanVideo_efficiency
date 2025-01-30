@@ -88,7 +88,7 @@ def infer_vae_adaptive(model: AutoencoderKLCausal3D,
             # Optionally save mp4
             if mp4:
                 save_path = os.path.join(output_dir, f"{file_name}.mp4")
-                save_videos_grid(reconstructed_video, save_path, fps=24, rescale=True)
+                save_videos_grid(reconstructed_video, save_path, fps=15, rescale=True)
                 logger.info(f'Sample saved to: {save_path}')
 
 def infer_vae(model: AutoencoderKLCausal3D,

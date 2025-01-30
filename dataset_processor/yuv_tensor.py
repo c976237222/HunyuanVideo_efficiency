@@ -66,10 +66,10 @@ def parse_fps_width_height_from_filename(yuv_filename):
 base_dir = "/mnt/public/wangsiyuan/k8bfn0qsj9fs1rwnc2x75z6t7/BVI-HFR"
 output_base = "/mnt/public/wangsiyuan/HunyuanVideo_efficiency/video_data"
 resolution_tag = f"{args.target_height}p" if args.target_height else "original"
-hz = "30hz"
+hz = "60hz"
 video_dir = os.path.join(base_dir, f"{hz}")  # 假设此目录下存放 .yuv 文件
-output_video_dir = os.path.join(output_base, f"{hz}_{resolution_tag}_videos")
-output_tensor_dir = os.path.join(output_base, f"{hz}_{resolution_tag}_tensors")
+output_video_dir = os.path.join(output_base, f"120hz_{resolution_tag}_videos")
+output_tensor_dir = os.path.join(output_base, f"120hz_{resolution_tag}_tensors")
 
 # 确保输出目录存在
 os.makedirs(output_video_dir, exist_ok=True)
@@ -86,7 +86,7 @@ def read_yuv_frames(yuv_path, width, height, start_frame=None, end_frame=None):
     - start_frame, end_frame: 帧范围过滤
     返回: [frame0, frame1, ...]，每个 frame 为 np.array(H, W, 3) in BGR
     """
-    if args.yuv_format == 'I420' or args.yuv_format == 'YV12':
+    if args.yuv_format in ['I420', 'YV12']:
         frame_size = width * height * 3 // 2  # I420/YV12: 1.5 * width * height
     elif args.yuv_format == 'NV12':
         frame_size = width * height * 3 // 2  # NV12 也是 1.5 * width * height
@@ -120,10 +120,7 @@ def read_yuv_frames(yuv_path, width, height, start_frame=None, end_frame=None):
 
             try:
                 # 将 YUV 数据重塑为 (height * 3 // 2, width)
-                if args.yuv_format == 'I420' or args.yuv_format == 'YV12':
-                    yuv_i420 = np.frombuffer(yuv_data, dtype=np.uint8).reshape((height * 3 // 2, width))
-                elif args.yuv_format == 'NV12':
-                    yuv_i420 = np.frombuffer(yuv_data, dtype=np.uint8).reshape((height * 3 // 2, width))
+                yuv_i420 = np.frombuffer(yuv_data, dtype=np.uint8).reshape((height * 3 // 2, width))
                 
                 # 调用 OpenCV 进行颜色空间转换到 BGR
                 if args.yuv_format == 'YV12':
@@ -212,13 +209,17 @@ def process_yuv_video(yuv_file):
         new_width = int(new_height * aspect_ratio)
         new_width = (new_width // 2) * 2  # 偶数化
 
-        # 写出mp4
+        # 统一缩放所有帧
         try:
+            frames_bgr_resized = [cv2.resize(frame, (new_width, new_height)) for frame in frames_bgr]
+            frames_bgr = frames_bgr_resized  # 更新 frames_bgr 为缩放后的帧
+
+            # 写出mp4，不再需要在写入时进行缩放
             write_frames_to_mp4(
                 frames=frames_bgr,
                 output_path=output_mp4_path,
                 fps=fps,  # 使用解析的 fps
-                target_size=(new_width, new_height)
+                target_size=None  # 已经缩放
             )
             logging.info(f"写出 MP4 文件 {output_mp4_path}，尺寸为 {new_width}x{new_height}。")
         except Exception as e:
@@ -229,6 +230,19 @@ def process_yuv_video(yuv_file):
     else:
         # 不做缩放
         final_size = (width, height)
+
+        # 写出mp4，不进行缩放
+        try:
+            write_frames_to_mp4(
+                frames=frames_bgr,
+                output_path=output_mp4_path,
+                fps=fps,  # 使用解析的 fps
+                target_size=None
+            )
+            logging.info(f"写出 MP4 文件 {output_mp4_path}，尺寸为 {final_size[0]}x{final_size[1]}。")
+        except Exception as e:
+            logging.error(f"写出 MP4 文件 {output_mp4_path} 时出错：{e}")
+            return f"❌ 写出 MP4 文件时出错：{yuv_file}\n原因：{e}"
 
     # 4) 转换为 PyTorch Tensor
     frames_tensor = []
@@ -275,7 +289,7 @@ if __name__ == "__main__":
         logging.error("没有找到 .yuv 文件，请检查 video_dir 路径是否正确。")
         print("❌ 没有找到 .yuv 文件，请检查 video_dir 路径是否正确。")
     else:
-        with ThreadPoolExecutor(max_workers=8) as executor:
+        with ThreadPoolExecutor(max_workers=1) as executor:
             futures = {executor.submit(process_yuv_video, f): f for f in yuv_files}
 
             for future in tqdm(as_completed(futures), total=len(yuv_files)):

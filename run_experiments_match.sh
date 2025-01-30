@@ -18,9 +18,8 @@ BATCH_SIZE=1
 NUM_WORKERS=4
 NUM_VIDEOS_PER_TXT=1
 CONFIG_JSON_DIR="/home/hanling/HunyuanVideo_efficiency/t_ops_config.json"
-OUT_BASE="/mnt/public/wangsiyuan/HunyuanVideo_efficiency/analysis/stride"
-EXP_OUT_DIR="/home/hanling/HunyuanVideo_efficiency/analysis/720p_tmp_stride"
-TENSOR_DIR="/home/hanling/HunyuanVideo_efficiency/video_data/processed_720p_tensors"
+EXP_OUT_DIR="/home/hanling/HunyuanVideo_efficiency/analysis/dynamic_15hz_480p_stride"
+TENSOR_DIR="/home/hanling/HunyuanVideo_efficiency/video_data/15hz_480p_tensors"
 rm -rf $EXP_OUT_DIR/*
 python "$PY_INFER" \
     --tensor-dir "$TENSOR_DIR" \
