@@ -612,7 +612,7 @@ class AutoencoderKLCausal3D(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
                 #ratio = adaptor.decide_compression_ratio_ssim(tile_ci)
                 tile_ci = 0.0
                 self.tiles_ci.append(tile_ci)
-                ratio=1
+                ratio=4
                 vae_for_tile = adaptor.get_vae_for_ratio(ratio)
                 logger.info(f"[Encode] tile range=({st_frame},{st_frame + self.tile_sample_min_tsize + 1}), shape={tile.shape}, ratio={ratio}")
                 # 记录该 tile 用到的 ratio（以便 decode 时还原）
@@ -691,6 +691,8 @@ class AutoencoderKLCausal3D(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
         
         # decoded = adaptor.vae_2x.spatial_tiled_decode(z, return_dict=True).sample
         # return DecoderOutput(sample=decoded)
+        if len(self._used_tile_ratios_encode) ==0:
+            return self.temporal_tiled_decode_raw(z, return_dict=return_dict)
         
         # Split z into overlapping tiles and decode them separately.
         B, C, T, H, W = z.shape
@@ -809,6 +811,39 @@ class AutoencoderKLCausal3D(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
         # dec = row[1]
         # dec = torch.cat(row, dim=2)
         
+        if not return_dict:
+            return (dec,)
+
+        return DecoderOutput(sample=dec)
+
+    def temporal_tiled_decode_raw(self, z: torch.FloatTensor, return_dict: bool = True) -> Union[DecoderOutput, torch.FloatTensor]:
+        # Split z into overlapping tiles and decode them separately.
+
+        B, C, T, H, W = z.shape
+        overlap_size = int(self.tile_latent_min_tsize * (1 - self.tile_overlap_factor))
+        blend_extent = int(self.tile_sample_min_tsize * self.tile_overlap_factor)
+        t_limit = self.tile_sample_min_tsize - blend_extent
+
+        row = []
+        for i in range(0, T, overlap_size):
+            tile = z[:, :, i: i + self.tile_latent_min_tsize + 1, :, :]
+            if self.use_spatial_tiling and (tile.shape[-1] > self.tile_latent_min_size or tile.shape[-2] > self.tile_latent_min_size):
+                decoded = self.spatial_tiled_decode(tile, return_dict=True).sample
+            else:
+                tile = self.post_quant_conv(tile)
+                decoded = self.decoder(tile)
+            if i > 0:
+                decoded = decoded[:, :, 1:, :, :]
+            row.append(decoded)
+        result_row = []
+        for i, tile in enumerate(row):
+            if i > 0:
+                tile = self.blend_t(row[i - 1], tile, blend_extent)
+                result_row.append(tile[:, :, :t_limit, :, :])
+            else:
+                result_row.append(tile[:, :, :t_limit + 1, :, :])
+
+        dec = torch.cat(result_row, dim=2)
         if not return_dict:
             return (dec,)
 

@@ -20,9 +20,9 @@ args = parser.parse_args()
 base_dir = "/home/hanling/HunyuanVideo_efficiency/video_data"
 resolution_tag = f"{args.target_height}p" if args.target_height else "original"
 
-video_dir = os.path.join(base_dir, "large_motion")
-output_video_dir = os.path.join(base_dir, f"processed_{resolution_tag}_videos")
-output_tensor_dir = os.path.join(base_dir, f"processed_{resolution_tag}_tensors")
+video_dir = os.path.join(base_dir, "large_motion1")
+output_video_dir = os.path.join(base_dir, f"large_motion1_{resolution_tag}_videos")
+output_tensor_dir = os.path.join(base_dir, f"large_motion1_{resolution_tag}_tensors")
 
 # 确保输出目录存在
 os.makedirs(output_video_dir, exist_ok=True)
