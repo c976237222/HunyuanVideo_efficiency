@@ -71,7 +71,7 @@ def infer_vae_adaptive(model: AutoencoderKLCausal3D,
             )
             # posterior_out 是 AutoencoderKLOutput
             posterior = posterior_out.latent_dist  # 里面包含 mean/var
-
+            print(posterior.mode().shape)
             # =========== Decode阶段 ===========
             reconstructed_video = model.temporal_tiled_decode(
                 z=posterior.mode(),  # 或 sample() 取随机

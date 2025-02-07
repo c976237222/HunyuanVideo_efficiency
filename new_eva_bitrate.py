@@ -1,5 +1,7 @@
 import argparse
 import os
+import torch
+import cv2
 import pandas as pd
 import subprocess
 import logging
@@ -24,9 +26,43 @@ def parse_filename(filename):
     chunk_idx = int(parts[1].strip())
     return file_name, chunk_idx
 
-def compute_tile_ci(video_path: str) -> float:
+def video_to_tensor(video_path):
     """
-    计算视频的比特率 (kbps)，直接计算原始文件的比特率。
+    读取 15 FPS 的视频并转换为 PyTorch Tensor。
+    """
+    cap = cv2.VideoCapture(video_path)
+    frames = []
+    
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # 转换为 RGB
+        frame = torch.tensor(frame, dtype=torch.float32) / 255.0  # 归一化到 [0,1]
+        frames.append(frame)
+    
+    cap.release()
+    return torch.stack(frames)  # 形状: (num_frames, height, width, channels)
+
+def tensor_to_video(frames, output_path, fps=30):
+    """
+    将 PyTorch Tensor 直接保存为 30 FPS 的视频（无插值）。
+    这会缩短视频时长，但不会改变帧数据。
+    """
+    h, w = frames.shape[1:3]
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # 设置编码格式
+    out = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
+
+    for frame in frames:
+        frame = (frame.numpy() * 255).astype('uint8')  # 反归一化到 0-255
+        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)  # 转换为 BGR
+        out.write(frame)
+
+    out.release()
+
+def compute_tile_ci(video_path):
+    """
+    计算视频的比特率 (kbps)。
     """
     cmd = [
         "ffprobe", "-v", "error", 
@@ -54,13 +90,11 @@ def main():
     logging.info(f"输出 CSV 文件: {args.output_csv}")
     logging.info(f"最大处理文件数量: {args.max_files if args.max_files else '全部'}")
     
-    # 获取所有 .mp4 文件
     files = sorted(set(f for f in os.listdir(args.input_folder) if f.endswith('.mp4')))
     if args.max_files is not None:
         files = files[:args.max_files]
         logging.info(f"限制处理的文件数量为: {args.max_files}")
     
-    # 读取 CSV 文件
     df = pd.read_csv(args.input_csv)
     required_columns = {'file_name', 'chunk_idx', 'tile_ci'}
     if not required_columns.issubset(df.columns):
@@ -72,25 +106,32 @@ def main():
     bitrate_vals = []
     keys = []
     
-    # 遍历所有视频文件，直接计算原始视频的码率
     for filename in tqdm(files, desc="计算码率"):
         file_path = os.path.join(args.input_folder, filename)
+        converted_path = os.path.join(args.input_folder, f"converted_{filename}")
         try:
             file_name, chunk_idx = parse_filename(filename)
             if (file_name, chunk_idx) in keys:
                 continue
-            # 直接计算原始视频的比特率
-            bit_rate_kbps = compute_tile_ci(file_path)
+            
+            # 读取原始视频，转换为 Tensor
+            frames = video_to_tensor(file_path)
+            
+            # 直接保存为 30 FPS（不插值）
+            tensor_to_video(frames, converted_path, fps=30)
+            
+            # 计算新视频的比特率
+            bit_rate_kbps = compute_tile_ci(converted_path)
+            os.remove(converted_path)  # 清理转换后的视频文件
+
             keys.append((file_name, chunk_idx))
             bitrate_vals.append((file_name, chunk_idx, bit_rate_kbps))
         except ValueError as e:
             logging.warning(e)
             continue
     
-    # 创建新的 DataFrame 以存储比特率
     bitrate_df = pd.DataFrame(bitrate_vals, columns=['file_name', 'chunk_idx', 'tile_ci'])
     
-    # 合并到原 CSV 数据
     df_updated = pd.merge(df, bitrate_df, on=['file_name', 'chunk_idx'], how='left', suffixes=('', '_new'))
     matched = df_updated['tile_ci_new'].notna()
     logging.info(f"更新 {matched.sum()} 行 tile_ci 值。")
@@ -98,7 +139,6 @@ def main():
     df_updated.drop(columns=['tile_ci_new'], inplace=True)
     df_updated.drop_duplicates(inplace=True)
     
-    # 保存 CSV
     df_updated.to_csv(args.output_csv, index=False)
     logging.info(f"更新后的数据已保存到 {args.output_csv}")
 

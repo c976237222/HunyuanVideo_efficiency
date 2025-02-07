@@ -692,7 +692,7 @@ class AutoencoderKLCausal3D(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
         # decoded = adaptor.vae_2x.spatial_tiled_decode(z, return_dict=True).sample
         # return DecoderOutput(sample=decoded)
         if len(self._used_tile_ratios_encode) ==0:
-            return self.temporal_tiled_decode_raw(z, return_dict=return_dict)
+            return self.temporal_tiled_decode_dy_gen(z, return_dict=return_dict)
         
         # Split z into overlapping tiles and decode them separately.
         B, C, T, H, W = z.shape
@@ -811,6 +811,50 @@ class AutoencoderKLCausal3D(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
         # dec = row[1]
         # dec = torch.cat(row, dim=2)
         
+        if not return_dict:
+            return (dec,)
+
+        return DecoderOutput(sample=dec)
+
+    def temporal_tiled_decode_dy_gen(self, z: torch.FloatTensor, dlfr_config, return_dict: bool = True) -> Union[DecoderOutput, torch.FloatTensor]:
+        # Split z into overlapping tiles and decode them separately.
+
+        B, C, T, H, W = z.shape
+        tile_overlap=0
+        overlap_size = int(self.tile_latent_min_tsize * (1 - tile_overlap))
+        blend_extent = int(self.tile_sample_min_tsize * tile_overlap)
+        t_limit = self.tile_sample_min_tsize - blend_extent
+        
+        row = []
+        for i in range(0, T, overlap_size):
+            tile = z[:, :, i: i + self.tile_latent_min_tsize + 1, :, :]
+
+            if self.adaptor is None:
+                vae_for_tile = self
+            elif i>T//2:
+                vae_for_tile = self.adaptor.get_vae_for_ratio(2)
+                tile=tile[:,:,::2,:,:]
+                
+            else:
+                vae_for_tile = self.adaptor.get_vae_for_ratio(1)
+
+            if self.use_spatial_tiling and (tile.shape[-1] > self.tile_latent_min_size or tile.shape[-2] > self.tile_latent_min_size):
+                decoded = vae_for_tile.spatial_tiled_decode(tile, return_dict=True).sample
+            else:
+                tile = vae_for_tile.post_quant_conv(tile)
+                decoded = vae_for_tile.decoder(tile)
+            if i > 0:
+                decoded = decoded[:, :, 1:, :, :]
+            row.append(decoded)
+        result_row = []
+        for i, tile in enumerate(row):
+            if i > 0:
+                tile = self.blend_t(row[i - 1], tile, blend_extent)
+                result_row.append(tile[:, :, :t_limit, :, :])
+            else:
+                result_row.append(tile[:, :, :t_limit + 1, :, :])
+
+        dec = torch.cat(result_row, dim=2)
         if not return_dict:
             return (dec,)
 
