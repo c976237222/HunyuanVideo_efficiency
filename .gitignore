@@ -1,2 +1,12 @@
 __pycache__
+
 /ckpts/**/
+#DLFR
+/video_data
+/analysis*
+/output
+*.mp4
+*.pdf
+*.csv
+*.log
+*.txt
