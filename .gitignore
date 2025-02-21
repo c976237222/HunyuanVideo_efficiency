@@ -11,3 +11,9 @@ __pycache__
 *.list
 *.zip.*
 *.zip
+*.csv
+*.pdf
+*.png
+*.jpg
+*.log
+*.html
