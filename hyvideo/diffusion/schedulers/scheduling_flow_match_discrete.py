@@ -43,11 +43,12 @@ class FlowMatchDiscreteSchedulerOutput(BaseOutput):
     """
 
     prev_sample: torch.FloatTensor
+    dt: torch.FloatTensor
 
 
 class FlowMatchDiscreteScheduler(SchedulerMixin, ConfigMixin):
     """
-    Euler scheduler.
+    Euler scheduler.#这个scheduler可以更快的得到良好输出
 
     This model inherits from [`SchedulerMixin`] and [`ConfigMixin`]. Check the superclass documentation for the generic
     methods the library implements for all schedulers such as loading and saving.
@@ -251,7 +252,7 @@ class FlowMatchDiscreteScheduler(SchedulerMixin, ConfigMixin):
         if not return_dict:
             return (prev_sample,)
 
-        return FlowMatchDiscreteSchedulerOutput(prev_sample=prev_sample)
+        return FlowMatchDiscreteSchedulerOutput(prev_sample=prev_sample, dt=dt)
 
     def __len__(self):
         return self.config.num_train_timesteps

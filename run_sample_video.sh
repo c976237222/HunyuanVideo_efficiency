@@ -2,7 +2,7 @@
 # Description: This script demonstrates how to inference a video based on HunyuanVideo model
 
 python3 sample_video.py \
-    --video-size 360 640 \
+    --video-size 240 320 \
     --video-length 129 \
 	--infer-steps 50 \
     --prompt "A cat walks on the grass, realistic style." \

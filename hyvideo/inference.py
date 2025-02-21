@@ -191,7 +191,7 @@ class Inference(object):
         in_channels = args.latent_channels
         out_channels = args.latent_channels
 
-        model = load_model(
+        model = load_model( #HYVideoDiffusionTransformer
             args,
             in_channels=in_channels,
             out_channels=out_channels,
@@ -338,7 +338,7 @@ class Inference(object):
         if not model_path.exists():
             raise ValueError(f"model_path not exists: {model_path}")
         logger.info(f"Loading torch model {model_path}...")
-        state_dict = torch.load(model_path, map_location=lambda storage, loc: storage)
+        state_dict = torch.load(model_path, map_location=lambda storage, loc: storage, weights_only=False)
 
         if bare_model == "unknown" and ("ema" in state_dict or "module" in state_dict):
             bare_model = False

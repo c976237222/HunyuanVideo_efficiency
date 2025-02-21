@@ -631,7 +631,7 @@ class HYVideoDiffusionTransformer(ModelMixin, ConfigMixin):
             vec = vec + self.guidance_in(guidance)
 
         # Embed image and text.
-        img = self.img_in(img)
+        img = self.img_in(img) #输出B, THW_patch, Channel
         if self.text_projection == "linear":
             txt = self.txt_in(txt)
         elif self.text_projection == "single_refiner":
@@ -686,7 +686,7 @@ class HYVideoDiffusionTransformer(ModelMixin, ConfigMixin):
         img = x[:, :img_seq_len, ...]
 
         # ---------------------------- Final layer ------------------------------
-        img = self.final_layer(img, vec)  # (N, T, patch_size ** 2 * out_channels)
+        img = self.final_layer(img, vec)
 
         img = self.unpatchify(img, tt, th, tw)
         if return_dict:

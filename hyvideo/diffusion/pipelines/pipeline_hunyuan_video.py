@@ -23,7 +23,7 @@ import torch.distributed as dist
 import numpy as np
 from dataclasses import dataclass
 from packaging import version
-
+from hyvideo.utils.file_utils import save_videos_grid
 from diffusers.callbacks import MultiPipelineCallbacks, PipelineCallback
 from diffusers.configuration_utils import FrozenDict
 from diffusers.image_processor import VaeImageProcessor
@@ -131,7 +131,9 @@ def retrieve_timesteps(
         timesteps = scheduler.timesteps
         num_inference_steps = len(timesteps)
     else:
-        scheduler.set_timesteps(num_inference_steps, device=device, **kwargs)
+        scheduler.set_timesteps(num_inference_steps, device=device, **kwargs) #对num_inference_steps应用sd3_time_shift shift>1
+        #前期时间步更密集（shift < 1）：采样步伐更小，适合需要更细致初期生成的场景。
+        #后期时间步更密集（shift > 1）：采样步伐更小，适合需要优化细节的场景。
         timesteps = scheduler.timesteps
     return timesteps, num_inference_steps
 
@@ -448,16 +450,30 @@ class HunyuanVideoPipeline(DiffusionPipeline):
             negative_attention_mask,
         )
 
-    def decode_latents(self, latents, enable_tiling=True):
-        deprecation_message = "The decode_latents method is deprecated and will be removed in 1.0.0. Please use VaeImageProcessor.postprocess(...) instead"
-        deprecate("decode_latents", "1.0.0", deprecation_message, standard_warn=False)
-
-        latents = 1 / self.vae.config.scaling_factor * latents
-        if enable_tiling:
-            self.vae.enable_tiling()
-            image = self.vae.decode(latents, return_dict=False)[0]
+    def decode_latents(self, latents, enable_tiling, vae_dtype, vae_autocast_enabled, generator):
+        if (
+                hasattr(self.vae.config, "shift_factor")
+                and self.vae.config.shift_factor
+            ):
+                latents = (
+                    latents / self.vae.config.scaling_factor
+                    + self.vae.config.shift_factor
+                )
         else:
-            image = self.vae.decode(latents, return_dict=False)[0]
+            latents = latents / self.vae.config.scaling_factor
+
+        with torch.autocast(
+            device_type="cuda", dtype=vae_dtype, enabled=vae_autocast_enabled
+        ):
+            if enable_tiling:
+                self.vae.enable_tiling()
+                image = self.vae.decode(
+                    latents, return_dict=False, generator=generator
+                )[0]
+            else:
+                image = self.vae.decode(
+                    latents, return_dict=False, generator=generator
+                )[0]
         image = (image / 2 + 0.5).clamp(0, 1)
         # we always cast to float32 as this does not cause significant overhead and is compatible with bfloat16
         if image.ndim == 4:
@@ -553,7 +569,6 @@ class HunyuanVideoPipeline(DiffusionPipeline):
                     f" got: `prompt_embeds` {prompt_embeds.shape} != `negative_prompt_embeds`"
                     f" {negative_prompt_embeds.shape}."
                 )
-
 
     def prepare_latents(
         self,
@@ -907,6 +922,7 @@ class HunyuanVideoPipeline(DiffusionPipeline):
         extra_set_timesteps_kwargs = self.prepare_extra_func_kwargs(
             self.scheduler.set_timesteps, {"n_tokens": n_tokens}
         )
+        #timesteps是普通线性的,num_inference_steps是包含扭曲的
         timesteps, num_inference_steps = retrieve_timesteps(
             self.scheduler,
             num_inference_steps,
@@ -925,6 +941,7 @@ class HunyuanVideoPipeline(DiffusionPipeline):
 
         # 5. Prepare latent variables
         num_channels_latents = self.transformer.config.in_channels
+        #latents shape :[1, 16, T//4, H//8, W//8]
         latents = self.prepare_latents(
             batch_size * num_videos_per_prompt,
             num_channels_latents,
@@ -987,7 +1004,7 @@ class HunyuanVideoPipeline(DiffusionPipeline):
                 # predict the noise residual
                 with torch.autocast(
                     device_type="cuda", dtype=target_dtype, enabled=autocast_enabled
-                ):
+                ):  #self.transformer HYVideoDiffusionTransformer
                     noise_pred = self.transformer(  # For an input image (129, 192, 336) (1, 256, 256)
                         latent_model_input,  # [2, 16, 33, 24, 42]
                         t_expand,  # [2]
@@ -1004,7 +1021,7 @@ class HunyuanVideoPipeline(DiffusionPipeline):
 
                 # perform guidance
                 if self.do_classifier_free_guidance:
-                    noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+                    noise_pred_uncond, noise_pred_text = noise_pred.chunk(2) #noise_pred shape is [2, 16, 33, 24, 42]
                     noise_pred = noise_pred_uncond + self.guidance_scale * (
                         noise_pred_text - noise_pred_uncond
                     )
@@ -1018,10 +1035,17 @@ class HunyuanVideoPipeline(DiffusionPipeline):
                     )
 
                 # compute the previous noisy sample x_t -> x_t-1
-                latents = self.scheduler.step(
-                    noise_pred, t, latents, **extra_step_kwargs, return_dict=False
-                )[0]
-
+                SchedulerOutput = self.scheduler.step(
+                    noise_pred, t, latents, **extra_step_kwargs, return_dict=True
+                )
+                latents = SchedulerOutput.prev_sample
+                dt = SchedulerOutput.dt
+                dir = "tensor_8"
+                direction = noise_pred.to(torch.float32) * dt #noise_pred shape: [2, C, T, H, W]
+                torch.save(direction, f"results/{dir}/direction_{i}.pt")
+                torch.save(noise_pred, f"results/{dir}/noise_pred_{i}.pt")
+                decode_latents = self.decode_latents(latents, enable_tiling, vae_dtype, vae_autocast_enabled, generator)
+                save_videos_grid(decode_latents, f"results/{dir}/video_{i}.mp4", fps=24)
                 if callback_on_step_end is not None:
                     callback_kwargs = {}
                     for k in callback_on_step_end_tensor_inputs:
