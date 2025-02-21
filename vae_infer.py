@@ -30,7 +30,7 @@ def infer_vae(model: AutoencoderKLCausal3D,
               device: str,
               output_dir: str,
               max_files: int = None,
-              mp4: bool = False):
+              mp4: bool = True):
     """
     Perform inference using the VAE model on video tensors.
     """
@@ -74,9 +74,9 @@ def infer_vae(model: AutoencoderKLCausal3D,
 
 def parse_args():
     parser = argparse.ArgumentParser(description="VAE Inference script for video tensors.")
-    parser.add_argument("--tensor-dir", type=str, required=True,
+    parser.add_argument("--tensor-dir", type=str,
                         help="Directory containing input .pt video tensors.")
-    parser.add_argument("--output-dir", type=str, required=True,
+    parser.add_argument("--output-dir", type=str,
                         help="Directory to save the reconstructed videos.")
     parser.add_argument("--vae-path", type=str, default="ckpts/hunyuan-video-t2v-720p/vae",
                         help="Path to VAE checkpoint directory (contains pytorch_model.pt).")
@@ -107,8 +107,6 @@ def main():
         logger=logger,
         vae_path=args.vae_path,
         device=device,
-        t_ops_config_path=args.config_json,
-        test=True
     )
     logger.info("VAE loaded.")
 
@@ -116,11 +114,11 @@ def main():
     # vae.enable_tiling()
 
     # 加载数据集
-    dataset = VideoTensorDataset(args.tensor_dir)
-    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
+    dataset = VideoTensorDataset("/home/hanling/HunyuanVideo_efficiency/video_data/15hz_480p_videos")
+    dataloader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=4)
 
     # 运行推理
-    infer_vae(vae, dataloader, device, args.output_dir, max_files=args.max_files, mp4=args.mp4)
+    infer_vae(vae, dataloader, device, "/home/hanling/HunyuanVideo_efficiency/results/vae", max_files=20)
 
 
 if __name__ == "__main__":

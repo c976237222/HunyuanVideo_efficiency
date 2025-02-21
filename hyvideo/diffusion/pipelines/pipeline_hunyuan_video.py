@@ -17,6 +17,7 @@
 #
 # ==============================================================================
 import inspect
+import os
 from typing import Any, Callable, Dict, List, Optional, Union, Tuple
 import torch
 import torch.distributed as dist
@@ -39,7 +40,7 @@ from diffusers.utils import (
     scale_lora_layers,
     unscale_lora_layers,
 )
-from diffusers.utils.torch_utils import randn_tensor
+from diffusers.utils.torch_utils import randn_tensor, randn_tensor_tile
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 from diffusers.utils import BaseOutput
 
@@ -47,7 +48,7 @@ from ...constants import PRECISION_TO_TYPE
 from ...vae.autoencoder_kl_causal_3d import AutoencoderKLCausal3D
 from ...text_encoder import TextEncoder
 from ...modules import HYVideoDiffusionTransformer
-
+from datetime import datetime
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 EXAMPLE_DOC_STRING = """"""
@@ -582,7 +583,7 @@ class HunyuanVideoPipeline(DiffusionPipeline):
         generator,
         latents=None,
     ):
-        shape = (
+        shape = (#(1, 16, 33, 46, 80)
             batch_size,
             num_channels_latents,
             video_length,
@@ -596,8 +597,8 @@ class HunyuanVideoPipeline(DiffusionPipeline):
             )
 
         if latents is None:
-            latents = randn_tensor(
-                shape, generator=generator, device=device, dtype=dtype
+            latents = randn_tensor_tile(#generator
+                shape, generator=None, device=device, dtype=dtype
             )
         else:
             latents = latents.to(device)
@@ -1040,12 +1041,14 @@ class HunyuanVideoPipeline(DiffusionPipeline):
                 )
                 latents = SchedulerOutput.prev_sample
                 dt = SchedulerOutput.dt
-                dir = "tensor_8"
-                direction = noise_pred.to(torch.float32) * dt #noise_pred shape: [2, C, T, H, W]
-                torch.save(direction, f"results/{dir}/direction_{i}.pt")
-                torch.save(noise_pred, f"results/{dir}/noise_pred_{i}.pt")
-                decode_latents = self.decode_latents(latents, enable_tiling, vae_dtype, vae_autocast_enabled, generator)
-                save_videos_grid(decode_latents, f"results/{dir}/video_{i}.mp4", fps=24)
+                #timestamp = datetime.now().strftime("%d%H%M%S")  
+                #dir = f"tensor_{timestamp}"
+                #direction = noise_pred.to(torch.float32) * dt #noise_pred shape: [2, C, T, H, W]
+                #os.makedirs(f"results/{dir}", exist_ok=True)
+                #torch.save(direction, f"results/{dir}/direction_{i}.pt")
+                #torch.save(noise_pred, f"results/{dir}/noise_pred_{i}.pt")
+                #decode_latents = self.decode_latents(latents, enable_tiling, vae_dtype, vae_autocast_enabled, generator)
+                #save_videos_grid(decode_latents, f"results/{dir}/video_{i}.mp4", fps=24)
                 if callback_on_step_end is not None:
                     callback_kwargs = {}
                     for k in callback_on_step_end_tensor_inputs:
