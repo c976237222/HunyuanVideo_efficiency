@@ -1,26 +1,26 @@
 #!/bin/bash
 
-#A cat lunges wildly, momentum fading into tentative pawsteps amid bent blades.            tensor_1
-#A cat careens through thrashing grass, chaotic energy settling into twitching vigilance.  tensor_2
-#A cat surges through grass, tumult diminishing to hushed, rippling waves. tensor_4
-#A cat sprints through flattened grass, strides shortening to a curious halt. tensor_6
-export CUDA_VISIBLE_DEVICES=5
+# 检查是否提供 GPU 号参数
+if [ -z "$1" ]; then
+    echo "Usage: $0 <GPU_ID>"
+    exit 1
+fi
+
+export CUDA_VISIBLE_DEVICES="$1"
+
 animal="cat"
 prompts=(
-    "A cat sprints through flattened grass, strides shortening to a curious halt."
+    "A cat careens through thrashing grass, chaotic energy settling into twitching vigilance."
 )
-#A cat strolling through a meadow, small steps at first, growing faster.                    tensor
-#A cat walking gently, slow motion initially, then larger strides.                          tensor_3
-#A cat walking, grass barely shifting, realistic motion. tensor_5
-#A cat walking slowly across grass, subtle motion, gradually increasing. tensor_7
-#A cat erupts in wild bounds, settling to subtle grass tremors. tensor_8
+
+output_dir="./results/idea_0"
+mkdir -p "$output_dir"
+
 for i in "${!prompts[@]}"; do
     prompt="${prompts[$i]}"
-    echo "Generating video for prompt ${i}: $prompt"
-    output_dir="./results/idea_0"
-    mkdir -p "$output_dir"
-    
-    # Run the python script in the background with the selected GPU
+    echo "Generating video for prompt ${i}: $prompt on GPU $CUDA_VISIBLE_DEVICES"
+
+    # Run the Python script with the specified GPU
     python3 sample_video.py \
         --video-size 360 640 \
         --video-length 129 \
@@ -31,5 +31,5 @@ for i in "${!prompts[@]}"; do
         --flow-shift 7.0 \
         --flow-reverse \
         --use-cpu-offload \
-        --save-path "$output_dir"
+        --save-path "$output_dir" &
 done
