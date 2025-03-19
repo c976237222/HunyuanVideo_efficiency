@@ -1041,15 +1041,15 @@ class HunyuanVideoPipeline(DiffusionPipeline):
                 )
                 latents = SchedulerOutput.prev_sample
                 dt = SchedulerOutput.dt
-                # timestamp = datetime.now().strftime("%d%H%M%S")  
-                # dir = f"tensor_{timestamp}"
-                # direction = noise_pred.to(torch.float32) * dt #noise_pred shape: [2, C, T, H, W]
-                # os.makedirs(f"results/{dir}", exist_ok=True)
-                # torch.save(direction, f"results/{dir}/direction_{i}.pt")
-                # torch.save(noise_pred, f"results/{dir}/noise_pred_{i}.pt")
-                # torch.save(latents, f"results/{dir}/latents_{i}.pt")
-                # decode_latents = self.decode_latents(latents, enable_tiling, vae_dtype, vae_autocast_enabled, generator)
-                # save_videos_grid(decode_latents, f"results/{dir}/video_{i}.mp4", fps=24)
+                #timestamp = datetime.now().strftime("%d%H%M%S")  
+                #dir = f"tensor_2_{timestamp}"
+                #direction = noise_pred.to(torch.float32) * dt #noise_pred shape: [2, C, T, H, W]
+                #os.makedirs(f"results/{dir}", exist_ok=True)
+                #torch.save(direction, f"results/{dir}/direction_{i}.pt")
+                #torch.save(noise_pred, f"results/{dir}/noise_pred_{i}.pt")
+                #torch.save(latents, f"results/{dir}/latents_{i}.pt")
+                #decode_latents = self.decode_latents(latents, enable_tiling, vae_dtype, vae_autocast_enabled, generator)
+                #save_videos_grid(decode_latents, f"results/{dir}/video_{i}.mp4", fps=24)
                 if callback_on_step_end is not None:
                     callback_kwargs = {}
                     for k in callback_on_step_end_tensor_inputs:

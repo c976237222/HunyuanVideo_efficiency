@@ -10,7 +10,7 @@ export CUDA_VISIBLE_DEVICES="$1"
 
 animal="cat"
 prompts=(
-    "A cat careens through thrashing grass, chaotic energy settling into twitching vigilance."
+    "A cat runs with quick, dynamic motion, grass sways."
 )
 
 output_dir="./results/idea_0"
