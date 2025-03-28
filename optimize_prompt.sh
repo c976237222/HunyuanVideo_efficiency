@@ -10,7 +10,7 @@ export CUDA_VISIBLE_DEVICES="$1"
 
 animal="cat"
 prompts=(
-    "A cat runs with quick, dynamic motion, grass sways."
+    "A dog walks on the grass, realistic style."
 )
 
 output_dir="./results/idea_0"
@@ -24,7 +24,7 @@ for i in "${!prompts[@]}"; do
     python3 sample_video.py \
         --video-size 360 640 \
         --video-length 129 \
-        --infer-steps 50 \
+        --infer-steps 25 \
         --prompt "$prompt" \
         --seed 42 \
         --embedded-cfg-scale 6.0 \

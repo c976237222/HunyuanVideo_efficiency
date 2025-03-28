@@ -97,8 +97,8 @@ def randn_tensor_tile(
             a = 16
             # 2. **分离低频和高频**
             cutoff_t = num_timesteps // a  # 时间维度的低频截断
-            cutoff_h = height // a  # 空间维度的低频截断
-            cutoff_w = width // a
+            cutoff_h = height # 空间维度的低频截断
+            cutoff_w = width#
 
             mask = torch.zeros_like(prev_fft)
             mask[:, :, :cutoff_t, :cutoff_h, :cutoff_w] = 1  # 仅保留左上角低频区域

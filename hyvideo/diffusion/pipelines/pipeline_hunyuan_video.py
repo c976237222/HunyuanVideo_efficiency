@@ -40,10 +40,12 @@ from diffusers.utils import (
     scale_lora_layers,
     unscale_lora_layers,
 )
-from diffusers.utils.torch_utils import randn_tensor, randn_tensor_tile
+import sys
+sys.path.append("/mnt/public/wangsiyuan/HunyuanVideo_efficiency")
+from diffusers.utils.torch_utils import randn_tensor
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 from diffusers.utils import BaseOutput
-
+from ...pre_noise.noise_utils import randn_tensor_tile, enhance_latents_with_low_freq
 from ...constants import PRECISION_TO_TYPE
 from ...vae.autoencoder_kl_causal_3d import AutoencoderKLCausal3D
 from ...text_encoder import TextEncoder
@@ -597,8 +599,8 @@ class HunyuanVideoPipeline(DiffusionPipeline):
             )
 
         if latents is None:
-            latents = randn_tensor_tile(#generator
-                shape, generator=None, device=device, dtype=dtype
+            latents = randn_tensor(#generator
+                shape, generator=generator, device=device, dtype=dtype
             )
         else:
             latents = latents.to(device)
@@ -1040,7 +1042,17 @@ class HunyuanVideoPipeline(DiffusionPipeline):
                     noise_pred, t, latents, **extra_step_kwargs, return_dict=True
                 )
                 latents = SchedulerOutput.prev_sample
-                dt = SchedulerOutput.dt
+                if i == 3 or i == 6:
+                    print('进行boost增强')
+                    latents = enhance_latents_with_low_freq(
+                        latents,
+                        cutoff_t=0.3,
+                        cutoff_h=0.35,
+                        cutoff_w=0.35,
+                        low_freq_boost=1.0
+                    )
+
+                #dt = SchedulerOutput.dt
                 #timestamp = datetime.now().strftime("%d%H%M%S")  
                 #dir = f"tensor_2_{timestamp}"
                 #direction = noise_pred.to(torch.float32) * dt #noise_pred shape: [2, C, T, H, W]
