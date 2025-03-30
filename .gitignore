@@ -17,3 +17,8 @@ __pycache__
 *.jpg
 *.log
 *.html
+*.npy
+events.*
+*.pb
+*.pth
+variables.*
