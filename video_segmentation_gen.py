@@ -33,11 +33,12 @@ vae.to(device)
 vae.eval()
 vae.enable_tiling()
 model=vae
+
 vae.tile_overlap_factor = 0
 from torch.utils.data import DataLoader
 from dataset_processor.dataset_loader import VideoTensorDataset
 
-tensor_dir="/mnt/public/wangsiyuan/HunyuanVideo_efficiency/video_data/15hz_240p_tensors"
+tensor_dir="/mnt/public/wangsiyuan/HunyuanVideo_efficiency/video_data/30hz_240p_tensors"
 FPS=30
 dataset = VideoTensorDataset(tensor_dir)
 dataloader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=4)
@@ -50,7 +51,7 @@ adaptor = AdaptiveTemporalTiling(
     )
 
 max_files = 22
-output_dir = '/mnt/public/wangsiyuan/HunyuanVideo_efficiency/analysis/15hz_240p_reconstructed_nothing_4x'
+output_dir = '/mnt/public/wangsiyuan/HunyuanVideo_efficiency/analysis/30hz_240p_reconstructed_nothing_1x'
 label_dir = f"{output_dir}_label"
 os.makedirs(output_dir, exist_ok=True)
 os.makedirs(label_dir, exist_ok=True)

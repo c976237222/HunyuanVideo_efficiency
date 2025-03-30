@@ -612,7 +612,7 @@ class AutoencoderKLCausal3D(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
                 #ratio = adaptor.decide_compression_ratio_ssim(tile_ci)
                 tile_ci = 0.0
                 self.tiles_ci.append(tile_ci)
-                ratio=4
+                ratio=1
                 vae_for_tile = adaptor.get_vae_for_ratio(ratio)
                 logger.info(f"[Encode] tile range=({st_frame},{st_frame + self.tile_sample_min_tsize + 1}), shape={tile.shape}, ratio={ratio}")
                 # 记录该 tile 用到的 ratio（以便 decode 时还原）

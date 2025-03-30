@@ -13,9 +13,9 @@ PY_INFER="infer.py"
 PY_METRICS="evaluation/compute_metrics.py"
 
 # 数据与模型路径
-TENSOR_DIR="video_data/video_data_100_240p_tensor"
+TENSOR_DIR="/mnt/public/wangsiyuan/HunyuanVideo_efficiency/video_data/15hz_540p_tensors"
 VAE_PATH="ckpts/hunyuan-video-t2v-720p/vae"
-ORIGINAL_VIDEOS="video_data/video_data_100_240p"
+ORIGINAL_VIDEOS="/mnt/public/wangsiyuan/HunyuanVideo_efficiency/video_data/15hz_540p_videos"
 
 # 输出目录改为 *_stride
 OUT_BASE="analysis/two_true_stride"
