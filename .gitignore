@@ -3,6 +3,7 @@ __pycache__
 *.mp4
 *.pt
 /analysis/
+events.*
 *.txt
 *.gz
 *.xz
@@ -15,3 +16,5 @@ output
 *.csv
 *.log
 *.pdf
+*.npy
+*.csv

@@ -37,7 +37,7 @@ vae.tile_overlap_factor = 0
 from torch.utils.data import DataLoader
 from dataset_processor.dataset_loader import VideoTensorDataset
 
-tensor_dir="/home/hanling/HunyuanVideo_efficiency/video_data/large_motion2_720p_tensors"
+tensor_dir="/mnt/public/wangsiyuan/HunyuanVideo_efficiency/video_data/15hz_240p_tensors"
 FPS=30
 dataset = VideoTensorDataset(tensor_dir)
 dataloader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=4)
@@ -50,7 +50,7 @@ adaptor = AdaptiveTemporalTiling(
     )
 
 max_files = 22
-output_dir = '/home/hanling/HunyuanVideo_efficiency/analysis/animals_large_motion_1x'
+output_dir = '/mnt/public/wangsiyuan/HunyuanVideo_efficiency/analysis/15hz_240p_reconstructed_nothing_4x'
 label_dir = f"{output_dir}_label"
 os.makedirs(output_dir, exist_ok=True)
 os.makedirs(label_dir, exist_ok=True)
@@ -95,7 +95,6 @@ for batch_idx, (video_tensor, file_name) in enumerate(dataloader):
             )
             # posterior_out 是 AutoencoderKLOutput
             posterior = posterior_out.latent_dist  # 里面包含 mean/var
-            row = posterior_out.row
             tiles_ci = posterior_out.tiles_ci
             # =========== Decode阶段 ===========
             #for tile_ind, (cur_tile, cur_ratio) in enumerate(row):

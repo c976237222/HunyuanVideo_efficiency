@@ -42,9 +42,9 @@ class AdaptiveTemporalTiling:
         self.fps = fps
         
         # 针对您给出的 3 个 JSON 文件
-        self.config_4x = "/home/hanling/HunyuanVideo_efficiency/analysis/config_stride2_json/exp_262.json"
-        self.config_2x = "/home/hanling/HunyuanVideo_efficiency/analysis/config_stride_json/exp_20.json"
-        self.config_1x = "/home/hanling/HunyuanVideo_efficiency/t_ops_config.json"
+        self.config_4x = "/mnt/public/wangsiyuan/HunyuanVideo_efficiency/dlfr_generation/config_4x.json"
+        self.config_2x = "/mnt/public/wangsiyuan/HunyuanVideo_efficiency/dlfr_generation/config_2x.json"
+        self.config_1x = "/mnt/public/wangsiyuan/HunyuanVideo_efficiency/dlfr_generation/config_1x.json"
 
         logger.info("Loading 4x-time-compression VAE ...")
         self.vae_4x, _, _, _ = load_vae(

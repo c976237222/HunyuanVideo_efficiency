@@ -612,7 +612,7 @@ class AutoencoderKLCausal3D(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
                 #ratio = adaptor.decide_compression_ratio_ssim(tile_ci)
                 tile_ci = 0.0
                 self.tiles_ci.append(tile_ci)
-                ratio=1
+                ratio=4
                 vae_for_tile = adaptor.get_vae_for_ratio(ratio)
                 logger.info(f"[Encode] tile range=({st_frame},{st_frame + self.tile_sample_min_tsize + 1}), shape={tile.shape}, ratio={ratio}")
                 # 记录该 tile 用到的 ratio（以便 decode 时还原）
@@ -685,7 +685,7 @@ class AutoencoderKLCausal3D(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
         if not return_dict:
             return (posterior,)
 
-        return AutoencoderKLOutput(latent_dist=posterior, row=row, tiles_ci=self.tiles_ci)
+        return AutoencoderKLOutput(latent_dist=posterior, tiles_ci=self.tiles_ci)
 
     def temporal_tiled_decode(self, z: torch.FloatTensor, return_dict: bool = True, adaptor=None,) -> Union[DecoderOutput, torch.FloatTensor]:
         
